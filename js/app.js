@@ -2,7 +2,7 @@
 (function () {
   const F = window.Frases, E = window.Extenso, S = window.Store;
   const GRAU_OPC = [['', '—'], ['AM', 'A∴M∴'], ['CM', 'C∴M∴'], ['MM', 'M∴M∴'], ['MI', 'M∴I∴']];
-  const PASSOS = ['Sessão', 'Agenda do dia', 'Ata anterior', 'Ocorrências', 'Presença', 'Doença e Aflição', 'Palavra', 'Revisar e gerar'];
+  const PASSOS = ['Sessão', 'Agenda do Dia', 'Ata e correspondência', 'Ocorrências', 'Presença', 'Doença e Boas Novas', 'Conclusão', 'Revisar e gerar'];
 
   const estado = { vista: 'lista', sessaoId: null, passo: 0, abaCadastro: 'irmaos', excluindo: null };
 
@@ -99,6 +99,72 @@
     const n = (nome || '').trim().toLowerCase();
     return todasPessoas().find((p) => p.nome.toLowerCase() === n);
   }
+  /* ---------- Grau na data da sessão (aba "Graus e datas") ---------- */
+  const ORDEM_GRAU = ['AM', 'CM', 'MM', 'MI'];
+  const DATAS_GRAU = [['iniciacao', 'Iniciação', 0], ['passagem', 'Passagem', 1], ['elevacao', 'Elevação', 2], ['instalacao', 'Instalação', 3]];
+  function irmaoDoCadastro(nome) {
+    const n = (nome || '').trim().toLowerCase();
+    return n ? S.db.irmaos.find((i) => (i.nome || '').trim().toLowerCase() === n) : null;
+  }
+  /* Usa as datas registradas; sem datas, vale o grau atual do cadastro */
+  function grauNaData(irmao, data) {
+    let i = ORDEM_GRAU.indexOf(irmao.grau || '');
+    if (!data) return irmao.grau || '';
+    for (let k = DATAS_GRAU.length - 1; k >= 1; k--) {
+      const [campo, , g] = DATAS_GRAU[k];
+      if (!irmao[campo]) continue;
+      if (irmao[campo] <= data) i = Math.max(i, g); else if (i >= g) i = g - 1;
+    }
+    if (i < 0 && irmao.iniciacao && irmao.iniciacao <= data) i = 0;
+    return i >= 0 ? ORDEM_GRAU[i] : (irmao.grau || '');
+  }
+  /* Grau mais alto já alcançado até hoje, pelas datas */
+  function grauAtualPelasDatas(irmao) {
+    let i = ORDEM_GRAU.indexOf(irmao.grau || '');
+    DATAS_GRAU.forEach(([campo, , g]) => { if (irmao[campo] && irmao[campo] <= hoje()) i = Math.max(i, g); });
+    return i >= 0 ? ORDEM_GRAU[i] : '';
+  }
+  /* Cópia da sessão com o grau de cada Irmão do quadro na data da sessão */
+  function sessaoComGrausDaData(s) {
+    const c = JSON.parse(JSON.stringify(s));
+    const visitar = (o) => {
+      if (!o || typeof o !== 'object') return;
+      if (Array.isArray(o)) { o.forEach(visitar); return; }
+      if (typeof o.nome === 'string' && 'grau' in o) {
+        const irm = irmaoDoCadastro(o.nome);
+        const temDatas = irm && DATAS_GRAU.some(([campo]) => irm[campo]);
+        if (irm && (temDatas || !o.grau)) o.grau = grauNaData(irm, s.data);
+      }
+      Object.values(o).forEach(visitar);
+    };
+    ['vm', 'v1', 'v2', 'secretario', 'agenda', 'ocorrencias', 'presentes', 'doenca', 'boasNovas', 'palavraAberta', 'palavraAutoridade', 'ausencias'].forEach((k) => visitar(c[k]));
+    return c;
+  }
+  /* Nominata em vigor na data: a nova administração vale a partir do dia seguinte à posse */
+  function nominataNaData(data) {
+    const c = S.db.config;
+    const lista = (c.historico || []).concat([{ administracao: c.administracao, posse: c.posse || '', cargos: c.cargos || [] }]);
+    if (c.proxima && c.proxima.posse) lista.push(c.proxima);
+    const validas = lista.filter((x) => !data || !x.posse || x.posse < data).sort((a, b) => (a.posse || '').localeCompare(b.posse || ''));
+    return validas[validas.length - 1] || lista[0];
+  }
+  function titularesNaData(data) {
+    const nom = nominataNaData(data) || {};
+    const pega = (cargo) => ((nom.cargos || []).find((x) => x.cargo === cargo) || {}).nome || '';
+    return { administracao: nom.administracao || '', vm: pega('Venerável Mestre'), v1: pega('1º Vigilante'), v2: pega('2º Vigilante'), secretario: pega('Secretário') };
+  }
+  function gerarAta(s) {
+    const cfg = Object.assign({}, S.db.config, { titulares: titularesNaData(s.data) });
+    return F.gerar(sessaoComGrausDaData(s), cfg);
+  }
+  /* Ajustes da versão 2.2 nos dados já salvos */
+  function migrarConfig() {
+    const c = S.db.config; let mudou = false;
+    const renomear = (arr) => (arr || []).forEach((x) => { if (x.cargo === 'Organista') { x.cargo = 'Mestre de Harmonia'; mudou = true; } });
+    renomear(c.cargos); if (c.proxima) renomear(c.proxima.cargos); (c.historico || []).forEach((h) => renomear(h.cargos));
+    if (c.proxima && c.proxima.administracao === '2026/2027' && !c.proxima.posse) { c.proxima.posse = '2026-12-09'; mudou = true; }
+    if (mudou) S.salvarConfig();
+  }
   function garantirDatalist() {
     let dl = document.getElementById('dl-pessoas');
     if (!dl) { dl = h('datalist', { id: 'dl-pessoas' }); document.body.append(dl); }
@@ -116,7 +182,11 @@
       oninput: (e) => {
         p.nome = e.target.value;
         const achado = acharPessoa(p.nome);
-        if (achado) { p.grau = achado.grau; sel.value = achado.grau || ''; if (achado.loja && op.comLoja) p.loja = achado.loja; }
+        if (achado) {
+          const irm = irmaoDoCadastro(achado.nome); const s = sessaoAtual();
+          p.grau = irm && s ? grauNaData(irm, s.data) : achado.grau; sel.value = p.grau || '';
+          if (op.comLoja) { if (achado.loja) p.loja = achado.loja; if (achado.cargo && !p.cargo) p.cargo = achado.cargo; }
+        }
         salvarSessaoDepois();
       }
     });
@@ -134,17 +204,18 @@
     return campo(rotulo, h('div', { class: 'pilha' },
       arr.map((c, i) => h('div', { class: 'pessoa' },
         h('input', { value: c.nome || '', placeholder: 'Nome completo do candidato', oninput: (e) => { c.nome = e.target.value; salvarSessaoDepois(); } }),
-        comResultado ? selecao(c, 'resultado', null, [['aprovado', 'Aprovado'], ['novo', 'Novo escrutínio'], ['rejeitado', 'Não aprovado']]) : null,
+        comResultado ? selecao(c, 'parecer', null, [['favoravel', 'Parecer favorável'], ['contrario', 'Parecer contrário']]) : null,
+        comResultado ? selecao(c, 'resultado', null, [['aprovado', 'Clara: aprovada'], ['rejeitado', 'Nublada: rejeitada'], ['novo', 'Anulada: repetir']]) : null,
         arr.length > 1 ? h('button', { type: 'button', class: 'icone', onclick: () => { arr.splice(i, 1); salvarSessaoDepois(); render(); } }, '✕') : null)),
       h('button', { type: 'button', class: 'link', onclick: () => { arr.push({ nome: '', resultado: 'aprovado' }); render(); } }, '+ outro candidato')));
   }
-  function atalhos(obj, chave, frases) {
+  function atalhos(obj, chave, frases, substituir) {
     return h('div', { class: 'atalhos' }, frases.map((f) => h('button', {
       type: 'button', class: 'chip', onclick: () => {
         const atual = (obj[chave] || '').trim().replace(/[.;]$/, '');
-        obj[chave] = atual ? atual + ', ' + f : f; salvarSessaoDepois(); render();
+        obj[chave] = atual && !substituir ? atual + ', ' + f : f; salvarSessaoDepois(); render();
       }
-    }, f)));
+    }, /\s$/.test(f) ? f.trim() + '…' : f)));
   }
   function cartao(titulo, corpo, aoRemover, extra) {
     return h('div', { class: 'cartao' },
@@ -184,17 +255,19 @@
   function novaSessao() {
     verificarPosse();
     const c = S.db.config;
-    const daAdm = S.db.sessoes.filter((x) => x.administracao === c.administracao);
-    const ultima = ordenadas()[0];
-    const numero = daAdm.reduce((m, x) => Math.max(m, Number(x.numero) || 0), 0) + 1;
-    const anterior = daAdm.sort((a, b) => (b.numero || 0) - (a.numero || 0))[0];
-    const secNome = (ultima && ultima.secretario && ultima.secretario.nome) || c.secretarioPadrao || c.secretario;
+    const data = hoje(); const ano = data.slice(0, 4);
+    // numeração por ano civil: volta ao nº 1 em 1º de janeiro
+    const doAno = S.db.sessoes.filter((x) => String(x.data || '').slice(0, 4) === ano);
+    const numero = doAno.reduce((m, x) => Math.max(m, Number(x.numero) || 0), 0) + 1;
+    const anterior = ordenadas()[0];
+    const tit = titularesNaData(data);
+    const secNome = (anterior && anterior.secretario && anterior.secretario.nome) || c.secretarioPadrao || tit.secretario;
     const s = {
-      id: S.novoId('s'), numero, administracao: c.administracao, data: hoje(), grau: 1,
+      id: S.novoId('s'), numero, administracao: tit.administracao || c.administracao, data, grau: 1, tipoSessao: 'Ordinária', boasNovas: [], ausencias: [],
       horaAbertura: '', horaEncerramento: '',
-      vm: pessoaDoCadastro(c.vm), v1: pessoaDoCadastro(c.v1), v2: pessoaDoCadastro(c.v2),
-      secretario: pessoaDoCadastro(secNome), adhoc: (secNome || '').toLowerCase() !== (c.secretario || '').toLowerCase(),
-      agenda: [], ataAnterior: { status: anterior ? 'aprovada' : 'nao_registrar', numero: anterior ? anterior.numero : '' }, expediente: [],
+      vm: pessoaDoCadastro(tit.vm || c.vm), v1: pessoaDoCadastro(tit.v1 || c.v1), v2: pessoaDoCadastro(tit.v2 || c.v2),
+      secretario: pessoaDoCadastro(secNome),
+      agenda: [], ataAnterior: anterior ? { status: 'conhecimento', numero: anterior.numero, ano: String(anterior.data || '').slice(0, 4), meio: 'digitalmente' } : { status: 'nao_registrar', numero: '' }, expediente: [],
       ocorrencias: [], presentes: [], visitantes: [], doenca: [], palavraAberta: [], palavraAutoridade: [],
       palavraVM: { agradeceuPresenca: true, agradeceuVisitantes: true, agape: true }, status: 'rascunho'
     };
@@ -247,12 +320,25 @@
         h('button', { type: 'button', class: 'link', onclick: () => { estado.vista = 'lista'; render(); } }, '← Atas'),
         h('strong', {}, 'Ata nº ' + String(s.numero || '').padStart(2, '0') + ' · ' + E.dataCurta(s.data))),
       h('ol', { class: 'passos' }, PASSOS.map((p, i) => h('li', {}, h('button', { type: 'button', class: i === estado.passo ? 'ativo' : '', onclick: () => irPasso(i) }, h('span', { class: 'n' }, i + 1), h('span', { class: 'p' }, p))))),
+      caixaACompletar(s),
       h('h2', {}, (estado.passo + 1) + '. ' + PASSOS[estado.passo]),
       passos[estado.passo](s),
       h('div', { class: 'navegacao' },
         estado.passo > 0 ? h('button', { type: 'button', onclick: () => irPasso(estado.passo - 1) }, '← Voltar') : h('span'),
         estado.passo < PASSOS.length - 1 ? h('button', { type: 'button', class: 'principal', onclick: () => irPasso(estado.passo + 1) }, 'Próximo →') : h('span'))
     );
+  }
+  /* Itens que faltam preencher (atas antigas trazidas para o sistema) */
+  function caixaACompletar(s) {
+    const lista = (s.aCompletar || []);
+    const abertos = lista.filter((x) => !x.feito);
+    if (!lista.length) return null;
+    if (!abertos.length) return h('div', { class: 'faixa' }, 'Todos os itens a completar desta ata foram resolvidos.');
+    return h('div', { class: 'pendencias' }, h('strong', {}, 'A completar nesta ata (' + abertos.length + ')'),
+      abertos.map((x) => h('div', { class: 'pendencia' },
+        h('span', {}, (x.passo !== undefined ? 'Passo ' + (x.passo + 1) + ': ' : '') + x.texto),
+        x.passo !== undefined && x.passo !== estado.passo ? h('button', { type: 'button', class: 'pequeno', onclick: () => irPasso(x.passo) }, 'Ir') : null,
+        h('button', { type: 'button', class: 'pequeno', onclick: () => { x.feito = true; salvarSessaoDepois(); render(); } }, 'Resolvido'))));
   }
   function irPasso(i) { estado.passo = i; render(); window.scrollTo(0, 0); }
 
@@ -263,17 +349,26 @@
         texto(s, 'numero', 'Número da ata', { tipo: 'number', ajuda: 'Sugerido automaticamente.' }),
         texto(s, 'administracao', 'Administração', { placeholder: '2025/2026' })),
       texto(s, 'data', 'Data da sessão', { tipo: 'date' }),
+      selecao(s, 'tipoSessao', 'Tipo de sessão', F.TIPOS_SESSAO, { ajuda: 'Iniciação, Passagem e Elevação são Sessões Magnas.' }),
       campo('Grau em que a Loja foi aberta', botoes([[1, '1º Aprendiz'], [2, '2º Companheiro'], [3, '3º Mestre']], s.grau, (v) => { s.grau = Number(v); salvarSessaoDepois(); render(); })),
       h('div', { class: 'linha2' },
-        texto(s, 'horaAbertura', 'Hora de abertura', { tipo: 'time' }),
-        texto(s, 'horaEncerramento', 'Hora de encerramento', { tipo: 'time', ajuda: 'Pode preencher no fim da sessão.' })),
-      h('h3', {}, 'Quem ocupou os malhetes'),
-      pessoaCampo(s, 'vm', 'Venerável Mestre (presidiu)', { ajuda: 'Se não for o VM titular, a ata registra “Venerável Mestre em exercício”.' }),
-      pessoaCampo(s, 'v1', '1º Vigilante (segundo malhete)'),
-      pessoaCampo(s, 'v2', '2º Vigilante (terceiro malhete)'),
+        texto(s, 'horaAbertura', 'Hora da abertura', { tipo: 'time' }),
+        texto(s, 'horaEncerramento', 'Hora do fechamento', { tipo: 'time', ajuda: 'Pode preencher no fim da sessão.' })),
+      h('h3', {}, 'Quem ocupou as Estações'),
+      pessoaCampo(s, 'vm', 'Estação do Leste: Venerável Mestre', { ajuda: 'Se não for o VM titular, a ata registra “Venerável Mestre em exercício”.' }),
+      pessoaCampo(s, 'v1', 'Estação do Oeste: 1º Vigilante'),
+      pessoaCampo(s, 'v2', 'Estação do Sul: 2º Vigilante'),
       h('h3', {}, 'Quem lavra a ata'),
       pessoaCampo(s, 'secretario', 'Secretário'),
-      marcar(s, 'adhoc', 'Secretário Ad Hoc (substituindo o titular)')
+      (() => {
+        const t = titularesNaData(s.data);
+        const linhas = [['1º Vigilante', s.v1, t.v1], ['2º Vigilante', s.v2, t.v2], ['Secretário', s.secretario, t.secretario]]
+          .filter(([, p, tt]) => tt && p && p.nome && p.nome.trim().toLowerCase() !== tt.trim().toLowerCase())
+          .map(([cargo, , tt]) => cargo + ' Ad Hoc (o titular é ' + tt + ')');
+        return h('p', { class: 'ajuda' }, 'Administração ' + (t.administracao || s.administracao || '') + '. ' +
+          (linhas.length ? 'A ata vai registrar: ' + linhas.join('; ') + '.' : 'Todos os cargos estão com os titulares.') +
+          ' Quem não é o titular do cargo sai como Ad Hoc automaticamente (o V∴M∴ substituto sai como “em exercício”).');
+      })()
     );
   }
 
@@ -281,52 +376,115 @@
   function novoItem(tipo) {
     const base = { id: S.novoId('a'), tipo };
     const extras = {
-      instrucao: { grauInstrucao: 'AM', numero: 1, parte: '', irmaos: [] },
-      trabalho: { irmao: { nome: '', grau: '' }, ordinalTrabalho: '', grauTrabalho: 'AM', titulo: '' },
-      palestra: { irmao: { nome: '', grau: '' }, titulo: '' },
-      leitura_proposta: { processo: 'Iniciação', leitura: 1, candidatos: [], objecao: 'sem' },
-      escrutinio: { processo: 'Iniciação', candidatos: [] },
-      cerimonia: { cerimonia: 'Iniciação', parte: '', pessoas: [] },
+      instrucao: { grauInstrucao: 'AM', codigo: '1-I', numero: 1, parte: '', irmaos: [], ministrante: { nome: '', grau: '' } },
+      trabalho: { irmao: { nome: '', grau: '' }, ordinalTrabalho: '', grauTrabalho: 'AM', titulo: '', orientador: { nome: '', grau: '' }, momento: 'loja', debate: false, participantes: [] },
+      palestra: { irmao: { nome: '', grau: '' }, titulo: '', convidado: false, origem: '', momento: 'descanso', debate: false, participantes: [] },
+      debate: { irmao: { nome: '', grau: '' }, titulo: '', momento: 'descanso', debate: true, participantes: [], contribuicoes: '' },
+      orientacoes: { natureza: 'orientacoes', irmaos: [], titulo: '', momento: 'descanso', debate: false, participantes: [] },
+      leitura_proposta: { processo: 'Iniciação', leitura: 1, candidatos: [], objecao: 'sem', proponente: { nome: '', grau: '' } },
+      sindicancia: { processo: 'Iniciação', fase: 'designacao', candidatos: [], comissao: [], parecer: 'favoravel' },
+      escrutinio: { processo: 'Iniciação', candidatos: [], devidaForma: false },
+      cerimonia: { cerimonia: 'Iniciação', parte: '', pessoas: [], designado: { nome: '', grau: '' } },
+      cobertura_altar: { irmao: { nome: '', grau: 'MM' }, falecimento: '', iniciado: '', passado: '', elevado: '', instalado: '', membroHa: '', despedidaData: '', despedidaLocal: '', cobrir: true, dias: 30 },
       entrega_identidade: { entregas: [{ entrega: { nome: '', grau: '' }, recebe: { nome: '', grau: '' }, grau: 'AM' }] },
-      prestacao_contas: { irmao: pessoaDoCadastro(nomeDoCargo('Tesoureiro')), periodo: '', resultado: 'aprovada', ressalva: '' },
+      prestacao_contas: { irmao: pessoaDoCadastro(nomeDoCargo('Tesoureiro')), periodo: '', resultado: 'informativa', ressalva: '', momento: 'descanso', debate: false, participantes: [] },
       leitura_documento: { documento: 'Decreto', numeroDoc: '', origem: '', resumo: '' },
       reuniao_administrativa: { assuntos: [''] },
-      votacao: { assunto: '', resultadoVotacao: '' },
+      votacao: { assunto: '', resultadoTipo: 'unanimidade', resultadoVotacao: '' },
       eleicao: (() => { const p = S.db.config.proxima || {}; return { administracao: p.administracao || '', forma: 'unanimidade', posse: p.posse || '', cargos: (p.cargos || []).map((x) => ({ cargo: x.cargo, pessoa: pessoaDoCadastro(x.nome) })) }; })(),
-      instalacao: (() => { const p = S.db.config.proxima || {}; const vm = ((p.cargos || []).find((x) => x.cargo === 'Venerável Mestre') || {}).nome; return { administracao: p.administracao || '', vm: pessoaDoCadastro(vm || ''), instalador: { nome: '', grau: '' } }; })(),
+      instalacao: (() => { const p = S.db.config.proxima || {}; const vm = ((p.cargos || []).find((x) => x.cargo === 'Venerável Mestre') || {}).nome; return { administracao: p.administracao || '', modalidade: 'ambas', vm: pessoaDoCadastro(vm || ''), instalador: { nome: '', grau: '' } }; })(),
       outro: { texto: '', observacao: '' }
     };
     return Object.assign(base, JSON.parse(JSON.stringify(extras[tipo] || {})));
   }
+  /* Em loja ou no descanso, debate e quem participou */
+  function blocoMomento(it) {
+    if (F.MOMENTO_PADRAO[it.tipo] === undefined) return null;
+    const m = it.momento = F.momentoDe(it);
+    it.participantes = it.participantes || [];
+    const comDebate = it.tipo !== 'debate';
+    return h('div', { class: 'subcartao' },
+      selecao(it, 'momento', 'Quando foi tratado', F.MOMENTOS, { redesenhar: true, ajuda: m === 'loja' ? 'Assuntos formais e protocolares, com a Loja trabalhando.' : 'Vai para a parte “Período de descanso” da ata.' }),
+      ['trabalho', 'palestra', 'prestacao_contas', 'orientacoes'].includes(it.tipo) ? marcar(it, 'slides', 'Com apresentação de slides') : null,
+      comDebate ? marcar(it, 'debate', it.tipo === 'prestacao_contas' ? 'Houve perguntas e esclarecimentos' : 'Houve debate (os Irmãos deram suas opiniões)', { redesenhar: true }) : null,
+      it.debate || !comDebate ? [
+        listaPessoas(it.participantes, 'Quem participou com opiniões e contribuições (opcional)', 'participante'),
+        h('p', { class: 'ajuda' }, 'Sem nomes, a ata diz “vários Irmãos apresentaram seus pontos de vista”.'),
+        texto(it, 'contribuicoes', 'Resumo das contribuições (opcional)', { area: true, linhas: 2, placeholder: 'Ex.: Foram destacados o simbolismo da dualidade e a importância da tolerância entre os Irmãos.' })] : null);
+  }
   function camposItem(it) {
+    const campos = camposItemBase(it);
+    const bloco = blocoMomento(it);
+    return bloco ? [].concat(campos, [bloco]) : campos;
+  }
+  function camposItemBase(it) {
     switch (it.tipo) {
       case 'instrucao': return [
         campo('Instrução de', botoes([['AM', 'A∴M∴'], ['CM', 'C∴M∴'], ['MM', 'M∴M∴']], it.grauInstrucao, (v) => { it.grauInstrucao = v; salvarSessaoDepois(); render(); })),
-        h('div', { class: 'linha2' },
+        (it.grauInstrucao || 'AM') === 'AM'
+          ? selecao(it, 'codigo', 'Qual instrução (conforme o Ritual do 1º Grau)', F.INSTRUCOES_AM.concat([['', 'Outra (numerar)']]), { redesenhar: true })
+          : null,
+        (it.grauInstrucao || 'AM') !== 'AM' || !it.codigo ? h('div', { class: 'linha2' },
           selecao(it, 'numero', 'Qual instrução', [[1, '1ª'], [2, '2ª'], [3, '3ª']], { numero: true, redesenhar: true }),
-          selecao(it, 'parte', 'Parte', [['', 'Inteira'], ['1ª Parte', '1ª Parte'], ['2ª Parte', '2ª Parte']], { redesenhar: true })),
-        listaPessoas(it.irmaos, 'Para o(s) Irmão(s)')];
+          selecao(it, 'parte', 'Parte', [['', 'Inteira'], ['Parte I', 'Parte I'], ['Parte II', 'Parte II']], { redesenhar: true })) : null,
+        listaPessoas(it.irmaos, 'Para o(s) Irmão(s)'),
+        pessoaCampo(it, 'ministrante', 'Ministrada por (opcional)', { ajuda: 'Deixe vazio se foi o próprio V∴M∴. Se for outro Irmão, a ata registra “por designação do V∴M∴”.' })];
       case 'trabalho': return [
         pessoaCampo(it, 'irmao', 'Quem apresentou'),
         h('div', { class: 'linha2' },
           selecao(it, 'ordinalTrabalho', 'É trabalho obrigatório de grau?', [['', 'Não'], [1, '1º trabalho'], [2, '2º trabalho'], [3, '3º trabalho']], { redesenhar: true }),
           it.ordinalTrabalho ? selecao(it, 'grauTrabalho', 'Do grau', [['AM', 'A∴M∴'], ['CM', 'C∴M∴']], { redesenhar: true }) : h('span')),
-        texto(it, 'titulo', 'Título (opcional)'),
-        texto(it, 'observacao', 'Observação para a ata (opcional)', { placeholder: 'Ex.: O Irmão apresentou trabalho sobre sua Iniciação.' })];
-      case 'palestra': return [pessoaCampo(it, 'irmao', 'Quem apresentou'), texto(it, 'titulo', 'Tema'), texto(it, 'observacao', 'Observação (opcional)')];
+        texto(it, 'titulo', F.momentoDe(it) === 'descanso' ? 'Tema (opcional)' : 'Título (opcional)', F.momentoDe(it) === 'descanso' ? { placeholder: 'Ex.: o Pavimento Mosaico' } : {}),
+        pessoaCampo(it, 'orientador', 'Mestre Maçom orientador (opcional)', { ajuda: 'O V∴M∴ designa um Mestre Maçom para orientar os trabalhos de A∴M∴ e C∴M∴.' }),
+        texto(it, 'observacao', 'Observação para a ata (opcional)', { placeholder: 'Ex.: O trabalho foi apresentado à frente da Estação do Oeste, voltado para o Leste.' }),
+        atalhos(it, 'observacao', ['O trabalho foi apresentado à frente da Estação do Oeste, voltado para o Leste', 'O V∴M∴ parabenizou o Irmão pelo trabalho', 'O trabalho será arquivado na Secretaria'], true)];
+      case 'palestra': return [
+        marcar(it, 'convidado', 'Palestrante convidado (não é Irmão do quadro nem visitante)', { redesenhar: true }),
+        it.convidado ? [texto(it.irmao = it.irmao || { nome: '', grau: '' }, 'nome', 'Nome do palestrante'), texto(it, 'origem', 'Quem é (opcional)', { placeholder: 'Ex.: médico cardiologista; Professor da UFRGS' })] : pessoaCampo(it, 'irmao', 'Quem apresentou'),
+        texto(it, 'titulo', 'Tema', { placeholder: 'Ex.: a história da Maçonaria no Rio Grande do Sul' }), texto(it, 'observacao', 'Observação (opcional)')];
+      case 'debate': return [
+        texto(it, 'titulo', 'Tema do debate', { placeholder: 'Ex.: os significados do Pavimento Mosaico' }),
+        pessoaCampo(it, 'irmao', 'Quem conduziu (opcional)')];
+      case 'orientacoes': return [
+        selecao(it, 'natureza', 'O que foi', F.NATUREZA_ORIENT),
+        texto(it, 'titulo', 'Assunto (opcional)', { placeholder: 'Ex.: a frequência às sessões e a entrega dos trabalhos de grau' }),
+        listaPessoas(it.irmaos = it.irmaos || [], 'Quem orientou (opcional)'),
+        h('p', { class: 'ajuda' }, 'Serve também para as orientações e “puxões de orelha” coletivos dados pelos Irmãos mais antigos.'),
+        texto(it, 'observacao', 'Resumo para a ata (opcional)', { area: true, linhas: 2 })];
       case 'leitura_proposta': return [
         h('div', { class: 'linha2' },
           selecao(it, 'processo', 'Processo', [['Iniciação', 'Iniciação'], ['Filiação', 'Filiação'], ['Regularização', 'Regularização']], { redesenhar: true }),
           selecao(it, 'leitura', 'Leitura', [[1, '1ª leitura'], [2, '2ª leitura'], [3, '3ª leitura']], { numero: true, redesenhar: true })),
-        listaCandidatos(it.candidatos, 'Candidatos'),
+        listaCandidatos(it.candidatos, it.processo === 'Iniciação' || !it.processo ? 'Candidatos (peticionários)' : 'Irmãos peticionários'),
+        pessoaCampo(it, 'proponente', 'Proponente (opcional)'),
         selecao(it, 'objecao', 'Houve objeção?', [['sem', 'Não houve objeção'], ['com', 'Houve objeção']])];
+      case 'sindicancia': return [
+        h('div', { class: 'linha2' },
+          selecao(it, 'fase', 'O que aconteceu', [['designacao', 'Comissão designada'], ['parecer', 'Comissão deu o parecer']], { redesenhar: true }),
+          selecao(it, 'processo', 'Processo', [['Iniciação', 'Iniciação'], ['Filiação', 'Filiação'], ['Regularização', 'Regularização']], { redesenhar: true })),
+        listaCandidatos(it.candidatos, 'Peticionário(s)'),
+        listaPessoas(it.comissao = it.comissao || [], 'Irmãos da comissão', 'membro da comissão'),
+        it.fase === 'parecer' ? selecao(it, 'parecer', 'Parecer', [['favoravel', 'Favorável'], ['contrario', 'Contrário']]) : null];
       case 'escrutinio': return [
         selecao(it, 'processo', 'Processo', [['Iniciação', 'Iniciação'], ['Filiação', 'Filiação'], ['Regularização', 'Regularização']], { redesenhar: true }),
-        listaCandidatos(it.candidatos, 'Candidatos e resultado', true)];
+        listaCandidatos(it.candidatos, 'Peticionários e resultado', true),
+        h('p', { class: 'ajuda' }, 'Clara = aprovada. Nublada = três ou mais esferas pretas, rejeitada. Anulada = o V∴M∴ usou a prerrogativa de anular e repetir a votação.'),
+        marcar(it, 'devidaForma', 'O V∴M∴ determinou a votação na devida forma (com o Sinal do Grau)')];
       case 'cerimonia': return [
         campo('Cerimônia', botoes(Object.keys(F.CERIMONIAS).map((k) => [k, k]), it.cerimonia, (v) => { it.cerimonia = v; salvarSessaoDepois(); render(); })),
-        selecao(it, 'parte', 'Parte', [['', 'Cerimônia completa'], ['1ª Parte', '1ª Parte'], ['2ª Parte', '2ª Parte']], { redesenhar: true }),
-        it.cerimonia === 'Iniciação' ? listaCandidatos(it.pessoas, 'Candidatos iniciados') : listaPessoas(it.pessoas, 'Irmão(s)')];
+        ['Iniciação', 'Passagem', 'Elevação'].includes(it.cerimonia || 'Iniciação') ? selecao(it, 'parte', 'Parte', [['', 'Cerimônia completa'], ['Primeira Seção', 'Primeira Seção'], ['Segunda Seção', 'Segunda Seção']], { redesenhar: true }) : null,
+        (it.cerimonia || 'Iniciação') === 'Iniciação' ? listaCandidatos(it.pessoas, 'Candidatos iniciados') : listaPessoas(it.pessoas, 'Irmão(s)'),
+        (it.cerimonia || 'Iniciação') === 'Iniciação' ? pessoaCampo(it, 'designado', 'Mestre Maçom designado para assistir o novo A∴M∴ (opcional)') : null,
+        texto(it, 'observacao', 'Observação (opcional)', { placeholder: 'Ex.: Foram Condutores os Irmãos …' })];
+      case 'cobertura_altar': return [
+        pessoaCampo(it, 'irmao', 'Irmão falecido'),
+        texto(it, 'falecimento', 'Data do passamento', { tipo: 'date' }),
+        h('div', { class: 'linha2' }, texto(it, 'iniciado', 'Iniciado em', { tipo: 'date' }), texto(it, 'passado', 'Passado em', { tipo: 'date' })),
+        h('div', { class: 'linha2' }, texto(it, 'elevado', 'Elevado em', { tipo: 'date' }), texto(it, 'instalado', 'Mestre Instalado em (se for)', { tipo: 'date' })),
+        texto(it, 'membroHa', 'Membro da Loja há', { placeholder: 'Ex.: 8 anos, 3 meses e 12 dias' }),
+        h('div', { class: 'linha2' }, texto(it, 'despedidaData', 'Despedida Maçônica em', { tipo: 'date' }), texto(it, 'despedidaLocal', 'Local da Despedida', { placeholder: 'Ex.: no Crematório Metropolitano' })),
+        marcar(it, 'cobrir', 'O Altar foi coberto', { padraoVerdadeiro: true, redesenhar: true }),
+        it.cobrir !== false ? texto(it, 'dias', 'Por quantos dias', { tipo: 'number', ajuda: 'Geralmente 30 dias.' }) : null];
       case 'entrega_identidade': return [
         h('div', { class: 'pilha' }, it.entregas.map((e, i) => h('div', { class: 'subcartao' },
           pessoaCampo(e, 'recebe', 'Recebeu'),
@@ -336,10 +494,10 @@
         h('button', { type: 'button', class: 'link', onclick: () => { it.entregas.push({ entrega: { nome: '', grau: '' }, recebe: { nome: '', grau: '' }, grau: 'AM' }); render(); } }, '+ outra entrega')];
       case 'prestacao_contas': return [
         pessoaCampo(it, 'irmao', 'Quem apresentou'), texto(it, 'periodo', 'Período (opcional)', { placeholder: 'Ex.: ao primeiro semestre de 2026' }),
-        selecao(it, 'resultado', 'Resultado', [['aprovada', 'Aprovada sem ressalvas'], ['ressalva', 'Com ressalvas']], { redesenhar: true }),
+        selecao(it, 'resultado', 'Resultado', [['informativa', 'Apenas apresentada aos Irmãos'], ['aprovada', 'Aprovada sem ressalvas'], ['ressalva', 'Com ressalvas']], { redesenhar: true }),
         it.resultado === 'ressalva' ? texto(it, 'ressalva', 'Quais ressalvas') : null];
       case 'leitura_documento': return [
-        selecao(it, 'documento', 'Documento', ['Decreto', 'Ato', 'Prancha', 'Circular', 'Boletim'].map((x) => [x, x]), { redesenhar: true }),
+        selecao(it, 'documento', 'Documento', ['Decreto', 'Ato', 'Lei', 'Instrução Normativa', 'Circular', 'Boletim', 'Ofício'].map((x) => [x, x]), { redesenhar: true, ajuda: 'Leis, atos e decretos são ouvidos sob o Sinal de Fidelidade; a ata registra isso.' }),
         h('div', { class: 'linha2' }, texto(it, 'numeroDoc', 'Número', { placeholder: 'Ex.: 115' }), texto(it, 'origem', 'De quem / gestão', { placeholder: 'Ex.: gestão 2024/2027, do Sereníssimo Grão-Mestre' })),
         texto(it, 'resumo', 'Resumo (opcional)', { area: true, linhas: 2 })];
       case 'reuniao_administrativa': return [
@@ -349,17 +507,22 @@
           h('button', { type: 'button', class: 'link', onclick: () => { it.assuntos.push(''); render(); } }, '+ outro assunto')))];
       case 'eleicao': return [
         h('div', { class: 'linha2' }, texto(it, 'administracao', 'Administração eleita', { placeholder: '2026/2027' }), texto(it, 'posse', 'Data da posse (se já marcada)', { tipo: 'date' })),
-        selecao(it, 'forma', 'Como foi eleita', [['unanimidade', 'Por unanimidade'], ['aclamacao', 'Por aclamação'], ['maioria', 'Pela maioria dos votos']]),
+        selecao(it, 'forma', 'Como foi eleita', [['unanimidade', 'Por unanimidade'], ['maioria', 'Pela maioria dos votos']], { ajuda: 'O Ritual do York veda a “aclamação”. São eletivos VM, Vigilantes, Tesoureiro e Secretário; os demais cargos aparecem como indicados pelo VM eleito.' }),
         campo('Nominata eleita', h('div', { class: 'pilha' }, it.cargos.map((c, i) => h('div', { class: 'subcartao' },
           h('input', { value: c.cargo, placeholder: 'Cargo', oninput: (e) => { c.cargo = e.target.value; salvarSessaoDepois(); } }),
           pessoaCampo(c, 'pessoa', null, { remover: () => { it.cargos.splice(i, 1); salvarSessaoDepois(); render(); } }))),
           h('button', { type: 'button', class: 'link', onclick: () => { it.cargos.push({ cargo: '', pessoa: { nome: '', grau: '' } }); render(); } }, '+ cargo')),
           S.db.config.proxima ? null : 'Dica: cadastre a nominata em Ajustes > Próxima administração para ela vir preenchida.')];
       case 'instalacao': return [
-        texto(it, 'administracao', 'Administração empossada', { placeholder: '2026/2027' }),
-        pessoaCampo(it, 'vm', 'Venerável Mestre instalado'),
-        pessoaCampo(it, 'instalador', 'Mestre Instalador (opcional)')];
-      case 'votacao': return [texto(it, 'assunto', 'O que foi votado', { placeholder: 'Ex.: a proposta de alteração do valor da mensalidade' }), texto(it, 'resultadoVotacao', 'Resultado', { placeholder: 'Ex.: foi aprovada por unanimidade' })];
+        texto(it, 'administracao', 'Administração', { placeholder: '2026/2027' }),
+        selecao(it, 'modalidade', 'Cerimônia', [['ambas', 'Investidura do Mestre Eleito + Instalação e Posse dos Oficiais'], ['investidura', 'Só a Investidura do Mestre Eleito (restrita a Mestres Instalados)'], ['posse', 'Só a Instalação e Posse dos Oficiais (sessão pública)']], { redesenhar: true }),
+        pessoaCampo(it, 'vm', 'Venerável Mestre'),
+        pessoaCampo(it, 'instalador', 'Mestre Instalado que conduziu (opcional)'),
+        texto(it, 'observacao', 'Observação (opcional)')];
+      case 'votacao': return [
+        texto(it, 'assunto', 'O que foi votado', { placeholder: 'Ex.: a alteração do valor da mensalidade' }),
+        selecao(it, 'resultadoTipo', 'Resultado', [['unanimidade', 'Aprovada por unanimidade'], ['maioria', 'Aprovada pela maioria'], ['rejeitada', 'Rejeitada'], ['', 'Escrever o resultado']], { redesenhar: true }),
+        !it.resultadoTipo ? texto(it, 'resultadoVotacao', 'Resultado', { placeholder: 'Ex.: foi aprovada por 15 votos a 2' }) : null];
       default: return [texto(it, 'texto', 'Como aparece na agenda do dia'), texto(it, 'observacao', 'O que registrar no desenvolvimento (opcional)', { area: true, linhas: 2 })];
     }
   }
@@ -381,7 +544,8 @@
           }
         }, 'Incluir'))) ) : null,
       s.agenda.length ? null : h('p', { class: 'vazio' }, 'Escolha abaixo o que estava na agenda do dia, na ordem em que aconteceu.'),
-      s.agenda.map((it, i) => cartao((i + 1) + ') ' + nomeTipo(it.tipo), h('div', {}, camposItem(it), h('p', { class: 'previa', 'data-item': it.id }, F.agendaTexto(it))),
+      s.agenda.map((it, i) => cartao((i + 1) + ') ' + nomeTipo(it.tipo), h('div', {}, camposItem(it),
+        marcar(it, 'naAgenda', 'Constou na Agenda do Dia lida na abertura', { padraoVerdadeiro: F.momentoDe(it) !== 'descanso', redesenhar: true }), (!F.naAgenda(it) ? h('p', { class: 'previa descanso', 'data-item': it.id }, F.momentoDe(it) === 'descanso' ? 'Entra na parte “Período de descanso”, sem constar na Agenda do Dia.' : 'Não consta na Agenda do Dia lida na abertura; entra só no texto da ata.') : h('p', { class: 'previa', 'data-item': it.id }, F.agendaTexto(it)))),
         () => { s.agenda.splice(i, 1); salvarSessaoDepois(); render(); },
         h('span', { class: 'ordem' },
           i > 0 ? h('button', { type: 'button', class: 'icone', title: 'Subir', onclick: () => { s.agenda.splice(i - 1, 0, s.agenda.splice(i, 1)[0]); salvarSessaoDepois(); render(); } }, '↑') : null,
@@ -395,35 +559,53 @@
   function passoAtaAnterior(s) {
     const c = S.db.config;
     s.ataAnterior = s.ataAnterior || { status: 'nao_registrar' };
+    const TIPOS_DOC = ['Decreto', 'Ato', 'Lei', 'Circular', 'Boletim', 'Ofício', 'Carta', 'Convite', 'E-mail', 'Correspondência'];
+    (s.expediente || []).forEach((e) => { if (e.tipo === 'Prancha') e.tipo = 'Ofício'; });
+    if (s.ataAnterior.status === 'dispensada') s.ataAnterior.status = 'conhecimento';
     return h('div', { class: 'formulario' },
-      c.registrarAtaAnterior ? [
-        selecao(s.ataAnterior, 'status', 'Ata da sessão anterior', [['aprovada', 'Lida e aprovada sem ressalvas'], ['aprovada_correcao', 'Lida e aprovada com correção'], ['dispensada', 'Leitura dispensada e aprovada'], ['nao_lida', 'Não foi lida nesta sessão'], ['nao_registrar', 'Não registrar na ata']], { redesenhar: true }),
+      h('h3', {}, 'Ata da última reunião'),
+      c.registrarAtaAnterior !== false ? [
+        selecao(s.ataAnterior, 'status', 'O que o Secretário fez', [['aprovada', 'Leu a Ata e ela foi aprovada sem manifestação'], ['conhecimento', 'A Ata foi enviada antes e o V∴M∴ perguntou se todos estavam de acordo (aprovada)'], ['aprovada_correcao', 'Houve observação, votada e corrigida (aprovada)'], ['nao_lida', 'A Ata não foi apreciada nesta sessão'], ['nao_registrar', 'Não registrar na ata']], { redesenhar: true }),
         s.ataAnterior.status !== 'nao_registrar' ? texto(s.ataAnterior, 'numero', 'Número da ata anterior', { tipo: 'number' }) : null,
-        s.ataAnterior.status === 'aprovada_correcao' ? texto(s.ataAnterior, 'correcao', 'Qual a correção', { area: true, linhas: 2 }) : null
+        s.ataAnterior.status === 'conhecimento' ? [texto(s.ataAnterior, 'meio', 'Como foi disponibilizada', { placeholder: 'digitalmente' }), atalhos(s.ataAnterior, 'meio', ['digitalmente', 'por e-mail', 'pelo grupo de mensagens da Loja', 'em cópia impressa'], true)] : null,
+        s.ataAnterior.status === 'aprovada_correcao' ? texto(s.ataAnterior, 'correcao', 'Qual a observação/correção', { area: true, linhas: 2 }) : null
       ] : h('p', { class: 'vazio' }, 'O registro da ata anterior está desligado em Ajustes.'),
-      c.registrarExpediente ? [
-        h('h3', {}, 'Expediente decifrado'),
-        h('p', { class: 'ajuda' }, 'Ordem do Manual do Secretário: decretos e atos do Grão-Mestre, circulares da GL, boletins, correspondência maçônica, correspondência profana. Se não houve, deixe vazio.'),
+      c.registrarExpediente !== false ? [
+        h('h3', {}, 'Correspondência, atos e decretos'),
+        h('p', { class: 'ajuda' }, 'O V∴M∴ pergunta: “Temos correspondência, atos ou decretos?” Ordem sugerida: decretos e atos do Grão-Mestre, circulares da Grande Loja, boletins, correspondência de outras Lojas, correspondência em geral. Se não houve, deixe vazio.'),
         (s.expediente || []).map((e, i) => h('div', { class: 'pessoa' },
-          selecao(e, 'tipo', null, ['Decreto', 'Ato', 'Circular', 'Boletim', 'Prancha', 'Convite', 'E-mail', 'Correspondência'].map((x) => [x, x])),
+          selecao(e, 'tipo', null, TIPOS_DOC.map((x) => [x, x])),
           h('input', { value: e.descricao || '', placeholder: 'Ex.: nº 002/2026 da Loja Jorge Simões nº 310, convidando para sessão pública', oninput: (ev) => { e.descricao = ev.target.value; salvarSessaoDepois(); } }),
           h('button', { type: 'button', class: 'icone', onclick: () => { s.expediente.splice(i, 1); salvarSessaoDepois(); render(); } }, '✕'))),
-        h('button', { type: 'button', class: 'link', onclick: () => { s.expediente = s.expediente || []; s.expediente.push({ tipo: 'Prancha', descricao: '' }); render(); } }, '+ documento do expediente')
+        h('button', { type: 'button', class: 'link', onclick: () => { s.expediente = s.expediente || []; s.expediente.push({ tipo: 'Ofício', descricao: '' }); render(); } }, '+ correspondência, ato ou decreto')
       ] : null
     );
   }
 
   /* Passo 4 */
   function passoOcorrencias(s) {
-    const tipos = [['descanso', 'Loja em descanso'], ['ingresso', 'Ingresso após a abertura'], ['saida', 'Saída antecipada'], ['retirada_aprendizes', 'Retirada dos Aprendizes para instrução'], ['outro', 'Outra ocorrência']];
+    const tipos = F.TIPOS_OCORRENCIA;
     const nome = (t) => (tipos.find((x) => x[0] === t) || [, t])[1];
+    const grauBase = Number(s.grau || 1);
     return h('div', { class: 'formulario' },
-      s.ocorrencias.length ? null : h('p', { class: 'vazio' }, 'Nada fora do comum? Pode seguir. A ata dirá que os trabalhos transcorreram com regularidade e ordem.'),
+      s.ocorrencias.length ? null : h('p', { class: 'vazio' }, 'Nada fora do comum? Pode seguir. A ata dirá que os trabalhos transcorreram com regularidade e harmonia.'),
       s.ocorrencias.map((o, i) => cartao(nome(o.tipo), h('div', {},
-        o.tipo === 'retirada_aprendizes' ? null : texto(o, 'hora', o.tipo === 'descanso' ? 'Início do descanso' : 'Horário', { tipo: 'time' }),
-        o.tipo === 'descanso' ? [texto(o, 'horaFim', 'Retorno dos trabalhos', { tipo: 'time' }), texto(o, 'motivo', 'Para quê (opcional)', { placeholder: 'Ex.: para a reunião administrativa' })] : null,
-        o.tipo === 'ingresso' || o.tipo === 'saida' ? listaPessoas(o.pessoas = o.pessoas || [], 'Irmão(s)') : null,
-        o.tipo === 'saida' ? texto(o, 'motivo', 'Motivo (opcional)') : null,
+        texto(o, 'hora', { descanso: 'Chamada para o descanso', mudanca_grau: 'Suspensão no ' + grauBase + 'º Grau' }[o.tipo] || 'Horário (opcional)', { tipo: 'time' }),
+        o.tipo === 'descanso' ? [texto(o, 'horaFim', 'Chamada do descanso para o trabalho', { tipo: 'time' }), texto(o, 'motivo', 'Para quê (opcional)', { placeholder: 'Ex.: para aguardar a preparação do Candidato' }),
+          atalhos(o, 'motivo', ['para aguardar a preparação do Candidato', 'enquanto o novo Aprendiz Maçom se vestia'], true),
+          texto(o, 'resumo', 'Algo mais no descanso (opcional)', { area: true, linhas: 2, ajuda: 'Trabalhos, palestras, debates, contas e orientações do descanso: cadastre na Agenda do Dia marcando “No período de descanso”. Eles entram sozinhos na parte “Período de descanso”.' })] : null,
+        o.tipo === 'mudanca_grau' ? [
+          selecao(o, 'grauDestino', 'Loja aberta no', [[2, '2º Grau'], [3, '3º Grau']].filter((x) => x[0] > grauBase), { numero: true }),
+          texto(o, 'horaFim', 'Reaberta no ' + grauBase + 'º Grau às', { tipo: 'time' }),
+          texto(o, 'motivo', 'Para quê (opcional)', { placeholder: 'Ex.: para a instrução dos Companheiros Maçons' })] : null,
+        ['ingresso', 'saida', 'grandes_honras', 'exame_visitante'].includes(o.tipo) ? listaPessoas(o.pessoas = o.pessoas || [], o.tipo === 'exame_visitante' ? 'Visitante (opcional)' : 'Irmão(s)') : null,
+        o.tipo === 'grao_mestre' ? [
+          selecao(o, 'cargoGM', 'Quem', [['Grão-Mestre', 'Sereníssimo Grão-Mestre'], ['Grão-Mestre Adjunto', 'Grão-Mestre Adjunto'], ['Representante', 'Representante do Grão-Mestre']]),
+          pessoaCampo(o.pessoas = o.pessoas && o.pessoas.length ? o.pessoas : [{ nome: '', grau: 'MI' }], 0, 'Nome'),
+          texto(o, 'comitiva', 'Comitiva (opcional)', { placeholder: 'Ex.: dos Grandes Oficiais Irmãos …' }),
+          selecao(o, 'malhete', 'Malhete', [['devolveu', 'Ofereceu o malhete, que foi devolvido'], ['aceitou', 'Ofereceu o malhete, que foi aceito'], ['nao', 'Não registrar']])] : null,
+        o.tipo === 'exame_visitante' ? selecao(o, 'resultado', 'Resultado', [['admitido', 'Qualificado e admitido'], ['retirou', 'Não qualificado, convidado a retirar-se']]) : null,
+        ['saida', 'retirada_aprendizes', 'grandes_honras'].includes(o.tipo) ? texto(o, 'motivo', 'Motivo (opcional)') : null,
         o.tipo === 'outro' ? texto(o, 'texto', 'O que aconteceu', { area: true, linhas: 2 }) : null),
         () => { s.ocorrencias.splice(i, 1); salvarSessaoDepois(); render(); })),
       h('h3', {}, 'Adicionar ocorrência'),
@@ -465,62 +647,83 @@
         pessoaCampo(s.visitantes, i, null, { placeholder: 'Nome do visitante', comLoja: true, remover: () => { s.visitantes.splice(i, 1); salvarSessaoDepois(); render(); } }),
         h('div', { class: 'linha2' },
           texto(v, 'loja', null, { placeholder: 'Loja e número (ex.: Loja David nº 176)' }),
-          texto(v, 'cargo', null, { placeholder: 'Cargo, se houver (ex.: VM da Loja David)' })))),
+          texto(v, 'cargo', null, { placeholder: 'Cargo, se houver (ex.: VM da Loja David)' })),
+        marcar(v, 'leste', 'Convidado a sentar-se no Leste'))),
       h('button', { type: 'button', class: 'link', onclick: () => { s.visitantes = s.visitantes || []; s.visitantes.push({ nome: '', grau: '', loja: '', cargo: '' }); render(); } }, '+ visitante'),
-      h('p', { class: 'ajuda' }, 'Visitantes novos são guardados no cadastro ao gerar a ata, para aparecerem como sugestão nas próximas.')
+      h('p', { class: 'ajuda' }, 'Visitantes novos são guardados no cadastro ao gerar a ata. CIM, Potência, telefone e e-mail ficam em Cadastro › Visitantes.')
     );
   }
 
   /* Passo 6 */
   function passoDoenca(s) {
+    s.doenca = s.doenca || []; s.boasNovas = s.boasNovas || [];
+    const nada = 'Sem relatos? A ata registra que, consultados o Oeste, o Sul e os Irmãos presentes, nada houve a relatar.';
     return h('div', { class: 'formulario' },
-      h('p', { class: 'ajuda' }, 'Registre de forma discreta: quem pediu e por quem. Evite detalhes de diagnóstico.'),
-      s.doenca.length ? null : h('p', { class: 'vazio' }, 'Sem pedidos? A ata registra “Não houve manifestações.”'),
-      s.doenca.map((d, i) => cartao('Pedido ' + (i + 1), h('div', {},
-        pessoaCampo(d, 'quem', 'Quem pediu'),
+      h('h3', {}, 'Em Doença e Aflição'),
+      h('p', { class: 'ajuda' }, 'O V∴M∴ consulta o 1º Vigilante (Oeste), o 2º Vigilante (Sul) e os Irmãos. Registre de forma discreta: quem relatou e por quem. Evite detalhes de diagnóstico.'),
+      s.doenca.length ? null : h('p', { class: 'vazio' }, nada),
+      s.doenca.map((d, i) => cartao('Relato ' + (i + 1), h('div', {},
+        pessoaCampo(d, 'quem', 'Quem relatou'),
         texto(d, 'porQuem', 'Por quem', { placeholder: 'Ex.: pelo Ir∴ Mauro de Almeida / pela esposa do Ir∴ Rodrigo' }),
-        h('div', { class: 'atalhos' }, ['pelo Ir∴ ', 'pela esposa do Ir∴ ', 'pelo pai do Ir∴ ', 'pela mãe do Ir∴ ', 'pelo amigo '].map((f) => h('button', { type: 'button', class: 'chip', onclick: () => { d.porQuem = f; salvarSessaoDepois(); render(); } }, f.trim() + '…'))),
-        texto(d, 'detalhe', 'Complemento (opcional)', { placeholder: 'Ex.: que se recupera de uma cirurgia' })),
+        atalhos(d, 'porQuem', F.ATALHOS.doencaPorQuem, true),
+        texto(d, 'detalhe', 'Situação (opcional)', { placeholder: 'Ex.: que se recupera de uma cirurgia' }),
+        atalhos(d, 'detalhe', F.ATALHOS.doencaSituacao, true)),
         () => { s.doenca.splice(i, 1); salvarSessaoDepois(); render(); })),
-      h('button', { type: 'button', class: 'secundario', onclick: () => { s.doenca.push({ quem: { nome: '', grau: '' }, porQuem: '', detalhe: '' }); salvarSessaoDepois(); render(); } }, '+ pedido de vibrações')
+      h('button', { type: 'button', class: 'secundario', onclick: () => { s.doenca.push({ quem: { nome: '', grau: '' }, porQuem: '', detalhe: '' }); salvarSessaoDepois(); render(); } }, '+ relato em Doença e Aflição'),
+
+      h('h3', {}, 'Boas Novas'),
+      h('p', { class: 'ajuda' }, 'Logo depois de Doença e Aflição, o V∴M∴ pergunta se algum Irmão tem Boas Novas a compartilhar: nascimentos, aniversários, formaturas, recuperações, conquistas.'),
+      s.boasNovas.length ? null : h('p', { class: 'vazio' }, nada),
+      s.boasNovas.map((d, i) => cartao('Boa nova ' + (i + 1), h('div', {},
+        pessoaCampo(d, 'quem', 'Quem compartilhou'),
+        texto(d, 'texto', 'O que compartilhou (começando por “o/a…”)', { placeholder: 'Ex.: o nascimento de seu neto Pedro' }),
+        atalhos(d, 'texto', F.ATALHOS.boasNovas, true)),
+        () => { s.boasNovas.splice(i, 1); salvarSessaoDepois(); render(); })),
+      h('button', { type: 'button', class: 'secundario', onclick: () => { s.boasNovas.push({ quem: { nome: '', grau: '' }, texto: '' }); salvarSessaoDepois(); render(); } }, '+ boa nova')
     );
   }
 
   /* Passo 7 */
   function passoPalavra(s) {
     const pv = s.palavraVM = s.palavraVM || {};
+    s.ausencias = s.ausencias || [];
     return h('div', { class: 'formulario' },
-      h('h3', {}, 'Palavra Aberta'),
-      s.palavraAberta.length ? null : h('p', { class: 'vazio' }, 'Ninguém falou? A ata registra “Não houve manifestações.”'),
+      h('h3', {}, 'Conclusão da Reunião'),
+      h('p', { class: 'ajuda' }, 'O V∴M∴ pergunta ao Oeste, ao Sul e aos Irmãos se têm algum assunto para trazer perante a Loja antes do fechamento.'),
+      s.palavraAberta.length ? null : h('p', { class: 'vazio' }, 'Ninguém se manifestou? A ata registra “não houve manifestações”.'),
       s.palavraAberta.map((p, i) => cartao('Manifestação ' + (i + 1), h('div', {},
         pessoaCampo(p, 'quem', 'Quem falou', { comLoja: true }),
         texto(p, 'texto', 'O que disse (resumo, começando pelo verbo)', { area: true, linhas: 2, placeholder: 'Ex.: parabenizou os Irmãos que apresentaram trabalhos' }),
-        atalhos(p, 'texto', ['parabenizou os Irmãos que apresentaram trabalhos', 'agradeceu a acolhida da Loja', 'convidou os Irmãos para a sessão da sua Loja', 'registrou o aniversário do Ir∴ ', 'solicitou que os trabalhos apresentados sejam entregues à Secretaria'])),
+        atalhos(p, 'texto', F.ATALHOS.conclusao)),
         () => { s.palavraAberta.splice(i, 1); salvarSessaoDepois(); render(); })),
       h('button', { type: 'button', class: 'secundario', onclick: () => { s.palavraAberta.push({ quem: { nome: '', grau: '' }, texto: '' }); salvarSessaoDepois(); render(); } }, '+ manifestação'),
+      h('h3', {}, 'Ausências justificadas (opcional)'),
+      s.ausencias.map((_, i) => pessoaCampo(s.ausencias, i, null, { remover: () => { s.ausencias.splice(i, 1); salvarSessaoDepois(); render(); } })),
+      h('button', { type: 'button', class: 'link', onclick: () => { s.ausencias.push({ nome: '', grau: '' }); render(); } }, '+ Irmão com ausência justificada'),
 
       h('h3', {}, 'Palavra de autoridade (opcional)'),
       h('p', { class: 'ajuda' }, 'Ex.: Grão-Mestre, Grandes Vigilantes, Assessor Regional. Vira um parágrafo próprio, “PALAVRA DO 1º GRANDE VIGILANTE”.'),
       s.palavraAutoridade.map((p, i) => cartao('Autoridade ' + (i + 1), h('div', {},
         pessoaCampo(p, 'quem', 'Quem'), texto(p, 'cargo', 'Cargo', { placeholder: 'Ex.: 1º Grande Vigilante da GLMERGS' }),
-        texto(p, 'texto', 'O que disse', { area: true, linhas: 2, placeholder: 'Ex.: trouxe um T∴F∴A∴ do Sereníssimo Grão-Mestre e agradeceu o convite' }),
-        atalhos(p, 'texto', ['trouxe um T∴F∴A∴ do Sereníssimo Grão-Mestre', 'agradeceu o convite', 'parabenizou a Loja pelos trabalhos'])),
+        texto(p, 'texto', 'O que disse', { area: true, linhas: 2, placeholder: 'Ex.: trouxe a saudação fraterna do Sereníssimo Grão-Mestre e agradeceu o convite' }),
+        atalhos(p, 'texto', F.ATALHOS.autoridade)),
         () => { s.palavraAutoridade.splice(i, 1); salvarSessaoDepois(); render(); })),
       h('button', { type: 'button', class: 'secundario', onclick: () => { s.palavraAutoridade.push({ quem: { nome: '', grau: '' }, cargo: '', texto: '' }); salvarSessaoDepois(); render(); } }, '+ autoridade'),
 
       h('h3', {}, 'Palavra do V∴M∴'),
       marcar(pv, 'agradeceuPresenca', 'Agradeceu a presença de todos', { padraoVerdadeiro: true }),
       marcar(pv, 'agradeceuVisitantes', 'Agradeceu nominalmente aos visitantes'),
-      marcar(pv, 'agape', 'Convidou para o Ágape'),
-      texto(pv, 'proximaSessao', 'Lembrou de algo? (opcional)', { placeholder: 'Ex.: a próxima sessão, que será Sessão de Iniciação' }),
-      texto(pv, 'texto', 'Outra fala do V∴M∴ (opcional)', { area: true, linhas: 2, placeholder: 'Ex.: realizou a leitura das propostas…' })
+      marcar(pv, 'agape', 'Convidou para o ágape'),
+      texto(pv, 'proximaSessao', 'Lembrou de algo? (opcional)', { placeholder: 'Ex.: a próxima sessão, que será Sessão Magna de Iniciação' }),
+      texto(pv, 'texto', 'Outra fala do V∴M∴ (opcional)', { area: true, linhas: 2, placeholder: 'Ex.: parabenizou os Oficiais pela execução do Ritual' }),
+      atalhos(pv, 'texto', F.ATALHOS.vm)
     );
   }
 
   /* Passo 8 */
   function passoRevisar(s) {
     const avisos = F.verificar(s, S.db.sessoes);
-    const ata = F.gerar(s, S.db.config);
+    const ata = gerarAta(s);
     return h('div', { class: 'formulario' },
       avisos.length ? h('div', { class: 'faixa alerta' }, h('strong', {}, 'Confira antes de gerar:'), h('ul', {}, avisos.map((a) => h('li', {}, a)))) : h('div', { class: 'faixa ok' }, 'Tudo preenchido. Revise o texto abaixo.'),
       h('div', { class: 'acoes-gerar' },
@@ -538,14 +741,14 @@
   function folhaHTML(ata) {
     const frag = h('div', { class: 'folha-conteudo' },
       h('div', { class: 'timbre' },
-        h('img', { src: 'img/logo-caritas.jpg', alt: '' }),
+        h('img', { src: 'img/logo-gl.png', alt: 'GLMERGS' }),
         h('div', { class: 'timbre-texto' },
           h('div', { class: 'tb' }, 'À G∴D∴G∴A∴D∴U∴'), h('div', { class: 'tb' }, 'Aug∴ e Res∴ Loj∴ Simb∴ Caritas N.º 268'),
-          h('div', { class: 'tb' }, 'Fundada em 04 de maio de 2016'), h('div', {}, 'Rua Barão do Amazonas, n.º 3216 - Partenon'),
-          h('div', {}, 'Porto Alegre - RS - Brasil.'), h('div', { class: 'tb' }, 'Sessões: quartas-feiras 20h - Rito de York Americano'),
+          h('div', { class: 'tb' }, 'Fundada em 04 de maio de 2016'), h('div', {}, 'Rua Barão do Amazonas, n.º 2316 - Partenon'),
+          h('div', {}, 'Porto Alegre - RS, CEP 90660-001.'), h('div', { class: 'tb' }, 'Sessões: quartas-feiras 20h - Rito de York Americano'),
           h('div', { class: 'pequena' }, 'Jurisdicionada à M∴ R∴ Grande Loja Maçônica do Estado do Rio Grande do Sul')),
-        h('img', { src: 'img/logo-gl.png', alt: '' })),
-      ata.paragrafos.map((p) => h('p', { class: p.titulo ? 'titulo-ata' : '' }, p.runs.map((r) => r.b || r.i ? h(r.b ? 'strong' : 'em', {}, r.i && r.b ? h('em', {}, r.t) : r.t) : r.t))),
+        h('img', { src: 'img/logo-caritas.jpg', alt: 'Cáritas 268' })),
+      ata.paragrafos.map((p) => p.vazio ? h('p', { class: 'vazio-linha' }, '\u00a0') : h('p', { class: p.titulo ? 'titulo-ata' : '' }, p.runs.map((r) => r.b || r.i ? h(r.b ? 'strong' : 'em', {}, r.i && r.b ? h('em', {}, r.t) : r.t) : r.t))),
       h('div', { class: 'assinaturas' },
         h('div', {}, h('div', { class: 'traco' }), h('div', {}, ata.assinatura.vm), h('div', {}, 'Venerável Mestre')),
         h('div', {}, h('div', { class: 'traco' }), h('div', {}, ata.assinatura.sec), h('div', {}, ata.assinatura.funcao)))
@@ -557,13 +760,13 @@
     let mudou = false;
     (s.visitantes || []).filter((v) => v.nome).forEach((v) => {
       const ex = S.db.visitantes.find((x) => x.nome.toLowerCase() === v.nome.trim().toLowerCase());
-      if (!ex) { S.db.visitantes.push({ id: S.novoId('v'), nome: v.nome.trim(), grau: v.grau || '', loja: v.loja || '', cargo: v.cargo || '' }); mudou = true; }
+      if (!ex) { S.db.visitantes.push({ id: S.novoId('v'), nome: v.nome.trim(), grau: v.grau || '', cim: '', loja: v.loja || '', potencia: '', cargo: v.cargo || '', celular: '', email: '', observacoes: '' }); mudou = true; }
     });
     if (mudou) salvarListaDepois('visitantes');
   }
 
   async function gerarBlob(s) {
-    const ata = F.gerar(s, S.db.config);
+    const ata = gerarAta(s);
     return Word.gerarDocx(ata, 'modelo-ata.docx');
   }
   async function baixarWord(s) {
@@ -585,7 +788,7 @@
   }
   function imprimir(s) {
     const div = document.getElementById('impressao');
-    div.replaceChildren(folhaHTML(F.gerar(s, S.db.config)));
+    div.replaceChildren(folhaHTML(gerarAta(s)));
     setTimeout(() => window.print(), 150);
   }
 
@@ -593,8 +796,8 @@
   function vistaCadastros() {
     const aba = estado.abaCadastro;
     return h('section', {},
-      h('div', { class: 'segmentado largo' }, [['irmaos', 'Quadro da Loja'], ['visitantes', 'Visitantes']].map(([v, r]) => h('button', { type: 'button', class: aba === v ? 'ativo' : '', onclick: () => { estado.abaCadastro = v; render(); } }, r))),
-      aba === 'irmaos' ? tabelaIrmaos() : tabelaVisitantes());
+      h('div', { class: 'segmentado largo' }, [['irmaos', 'Quadro da Loja'], ['graus', 'Graus e datas'], ['visitantes', 'Visitantes']].map(([v, r]) => h('button', { type: 'button', class: aba === v ? 'ativo' : '', onclick: () => { estado.abaCadastro = v; render(); } }, r))),
+      aba === 'irmaos' ? tabelaIrmaos() : aba === 'graus' ? tabelaGraus() : tabelaVisitantes());
   }
   function tabelaIrmaos() {
     const lista = S.db.irmaos;
@@ -604,27 +807,70 @@
       conferir ? h('div', { class: 'faixa alerta' }, conferir + ' nomes vieram das atas antigas e precisam ser conferidos (grau e grafia). ',
         h('button', { type: 'button', class: 'pequeno', onclick: () => { lista.forEach((i) => delete i.conferir); salvarListaDepois('irmaos'); render(); } }, 'Já conferi todos')) : null,
       S.modoGoogle() ? h('p', { class: 'ajuda' }, 'Dica: você também pode editar esta lista direto na aba “Irmaos” da planilha da Loja.') : null,
-      h('div', { class: 'tabela' }, ordem.map((i) => h('div', { class: 'linha-tabela' + (i.ativo === false ? ' inativo' : '') },
+      h('div', { class: 'tabela' }, h('div', { class: 'linha-tabela cabecalho' }, h('span', {}, 'CIM'), h('span', {}, 'Nome'), h('span', {}, 'Grau'), h('span', {}, '')),
+        ordem.map((i) => h('div', { class: 'linha-tabela' + (i.ativo === false ? ' inativo' : '') },
+        h('input', { class: 'cim', value: i.matricula || '', placeholder: 'CIM', 'aria-label': 'CIM (identidade maçônica)', inputmode: 'numeric', oninput: (e) => { i.matricula = e.target.value.trim(); salvarListaDepois('irmaos'); } }),
         h('input', { value: i.nome, 'aria-label': 'Nome', oninput: (e) => { i.nome = e.target.value; delete i.conferir; salvarListaDepois('irmaos'); } }),
         h('select', { 'aria-label': 'Grau', onchange: (e) => { i.grau = e.target.value; delete i.conferir; salvarListaDepois('irmaos'); } }, GRAU_OPC.map(([v, r]) => h('option', { value: v, selected: i.grau === v }, r))),
         h('label', { class: 'marcar mini' }, h('input', { type: 'checkbox', checked: i.ativo !== false, onchange: (e) => { i.ativo = e.target.checked; salvarListaDepois('irmaos'); render(); } }), h('span', {}, 'Ativo')),
         i.conferir ? h('span', { class: 'etiqueta' }, 'conferir') : null))),
-      h('button', { type: 'button', class: 'secundario', onclick: () => { lista.push({ id: S.novoId('i'), nome: '', grau: 'AM', ativo: true }); render(); const ins = app().querySelectorAll('.linha-tabela input'); } }, '+ Irmão'),
-      h('p', { class: 'ajuda' }, 'Irmão que saiu do quadro: desmarque “Ativo”. Ele continua nas atas antigas, mas some da lista de presença.')
+      h('button', { type: 'button', class: 'secundario', onclick: () => { lista.push({ id: S.novoId('i'), nome: '', grau: 'AM', ativo: true, matricula: '' }); render(); } }, '+ Irmão'),
+      h('p', { class: 'ajuda' }, 'CIM é a identidade maçônica (matrícula) dada pela GLMERGS. Irmão que saiu do quadro: desmarque “Ativo”. Ele continua nas atas antigas, mas some da lista de presença.')
     );
   }
+  /* Registro das datas de Iniciação, Passagem, Elevação e Instalação de cada Irmão */
+  function tabelaGraus() {
+    const busca = (estado.buscaGraus || '').trim().toLowerCase();
+    const lista = S.db.irmaos.filter((i) => i.ativo !== false && (!busca || i.nome.toLowerCase().includes(busca)))
+      .sort((a, b) => a.nome.localeCompare(b.nome));
+    return h('div', { class: 'formulario' },
+      h('p', { class: 'ajuda' }, 'Registre as datas conforme forem acontecendo. A ata usa o grau que cada Irmão tinha na data da sessão. Sem datas, vale o grau do Quadro da Loja.'),
+      S.modoGoogle() ? h('p', { class: 'ajuda' }, 'As datas também ficam nas colunas da aba “Irmaos” da planilha.') : null,
+      h('input', { type: 'search', placeholder: 'Procurar Irmão', value: estado.buscaGraus || '', oninput: (e) => { estado.buscaGraus = e.target.value; const pos = e.target.selectionStart; render(); const el = app().querySelector('input[type=search]'); if (el) { el.focus(); el.setSelectionRange(pos, pos); } } }),
+      h('div', { class: 'pilha' }, lista.map((i) => h('div', { class: 'subcartao graus' },
+        h('div', { class: 'graus-topo' }, h('strong', {}, i.nome), h('span', { class: 'etiqueta' }, rotuloGrau(i.grau) || 'sem grau')),
+        h('div', { class: 'graus-datas' }, DATAS_GRAU.map(([campo, rotulo]) => h('label', { class: 'campo' }, h('span', { class: 'rotulo' }, rotulo),
+          h('input', { type: 'date', value: i[campo] || '', onchange: (e) => {
+            i[campo] = e.target.value;
+            const g = grauAtualPelasDatas(i);
+            if (g && g !== i.grau) { i.grau = g; aviso(i.nome + ' agora consta como ' + rotuloGrau(g) + '.'); }
+            salvarListaDepois('irmaos'); render();
+          } }))))))),
+      lista.length ? null : h('p', { class: 'vazio' }, 'Nenhum Irmão encontrado.'));
+  }
+  /* Cadastro completo dos visitantes. Na ata saem só nome, grau, cargo e Loja; o resto fica guardado. */
+  const CAMPOS_VISITANTE = [
+    ['cim', 'CIM (opcional)', { placeholder: 'Se o Irmão souber', inputmode: 'numeric' }],
+    ['loja', 'Loja e nº', { placeholder: 'Ex.: Loja Acácia nº 12' }],
+    ['potencia', 'Potência', { placeholder: 'Ex.: GLMERGS, GORGS, GOB-RS' }],
+    ['cargo', 'Cargo (se for autoridade)', { placeholder: 'Ex.: 1º Grande Vigilante da GLMERGS' }],
+    ['celular', 'Celular / WhatsApp', { placeholder: '(51) 99999-9999', type: 'tel' }],
+    ['email', 'E-mail', { placeholder: 'nome@exemplo.com', type: 'email' }]
+  ];
   function tabelaVisitantes() {
     const lista = S.db.visitantes;
+    const busca = (estado.buscaVisit || '').trim().toLowerCase();
+    const vistos = lista.filter((v) => !busca || [v.nome, v.loja, v.potencia, v.cim].join(' ').toLowerCase().includes(busca))
+      .sort((a, b) => (!a.nome) - (!b.nome) || (a.nome || '').localeCompare(b.nome || ''));
+    const alterar = (v, c, val) => { v[c] = val; salvarListaDepois('visitantes'); };
     return h('div', { class: 'formulario' },
-      h('p', { class: 'ajuda' }, 'Visitantes frequentes aparecem como sugestão ao preencher a presença e a Palavra.'),
-      h('div', { class: 'tabela' }, lista.map((v, idx) => h('div', { class: 'linha-tabela visit' },
-        h('input', { value: v.nome, placeholder: 'Nome', oninput: (e) => { v.nome = e.target.value; salvarListaDepois('visitantes'); } }),
-        h('select', { onchange: (e) => { v.grau = e.target.value; salvarListaDepois('visitantes'); } }, GRAU_OPC.map(([g, r]) => h('option', { value: g, selected: v.grau === g }, r))),
-        h('input', { value: v.loja || '', placeholder: 'Loja', oninput: (e) => { v.loja = e.target.value; salvarListaDepois('visitantes'); } }),
-        h('input', { value: v.cargo || '', placeholder: 'Cargo', oninput: (e) => { v.cargo = e.target.value; salvarListaDepois('visitantes'); } }),
-        h('button', { type: 'button', class: 'icone', onclick: () => { lista.splice(idx, 1); salvarListaDepois('visitantes'); render(); } }, '✕')))),
-      h('button', { type: 'button', class: 'secundario', onclick: () => { lista.push({ id: S.novoId('v'), nome: '', grau: 'MM', loja: '', cargo: '' }); render(); } }, '+ Visitante'));
+      h('p', { class: 'ajuda' }, 'Cadastre aqui os visitantes do Livro de Presenças. Na ata saem só o nome, o grau, o cargo e a Loja; CIM, Potência, telefone, e-mail e observações ficam guardados no sistema. Ao digitar o nome na presença da ata, os dados vêm sozinhos.'),
+      S.modoGoogle() ? h('p', { class: 'ajuda' }, 'Tudo fica também na aba “Visitantes” da planilha.') : null,
+      h('div', { class: 'linha-botoes' },
+        h('input', { type: 'search', placeholder: 'Procurar por nome, Loja, Potência ou CIM', value: estado.buscaVisit || '', oninput: (e) => { estado.buscaVisit = e.target.value; const pos = e.target.selectionStart; render(); const el = app().querySelector('input[type=search]'); if (el) { el.focus(); el.setSelectionRange(pos, pos); } } }),
+        h('button', { type: 'button', class: 'secundario', onclick: () => { estado.buscaVisit = ''; lista.push({ id: S.novoId('v'), nome: '', grau: 'MM', cim: '', loja: '', potencia: '', cargo: '', celular: '', email: '', observacoes: '' }); render(); const el = app().querySelector('.cartao-visitante input'); if (el) el.focus(); } }, '+ Visitante')),
+      h('p', { class: 'ajuda' }, lista.length + (lista.length === 1 ? ' visitante cadastrado' : ' visitantes cadastrados')),
+      h('div', { class: 'pilha' }, vistos.map((v) => h('div', { class: 'subcartao cartao-visitante' },
+        h('div', { class: 'visit-topo' },
+          h('label', { class: 'campo' }, h('span', { class: 'rotulo' }, 'Nome completo'), h('input', { value: v.nome || '', placeholder: 'Nome completo', oninput: (e) => alterar(v, 'nome', e.target.value) })),
+          h('label', { class: 'campo' }, h('span', { class: 'rotulo' }, 'Grau'), h('select', { onchange: (e) => alterar(v, 'grau', e.target.value) }, GRAU_OPC.map(([g, r]) => h('option', { value: g, selected: v.grau === g }, r))))),
+        h('div', { class: 'visit-campos' }, CAMPOS_VISITANTE.map(([c, rot, op]) => h('label', { class: 'campo' }, h('span', { class: 'rotulo' }, rot),
+          h('input', Object.assign({ value: v[c] || '', oninput: (e) => alterar(v, c, e.target.value) }, op))))),
+        h('label', { class: 'campo' }, h('span', { class: 'rotulo' }, 'Outras informações'), h('textarea', { rows: 2, value: v.observacoes || '', placeholder: 'Ex.: Loja visitada junto com o Ir∴ Fulano; aniversário; profissão', oninput: (e) => alterar(v, 'observacoes', e.target.value) })),
+        h('div', { class: 'linha-botoes' }, h('button', { type: 'button', class: 'link perigo-texto', onclick: () => { if (confirm('Excluir ' + (v.nome || 'este visitante') + ' do cadastro? As atas já feitas não mudam.')) { lista.splice(lista.indexOf(v), 1); salvarListaDepois('visitantes'); render(); } } }, 'Excluir do cadastro'))))),
+      vistos.length ? null : h('p', { class: 'vazio' }, busca ? 'Nenhum visitante encontrado.' : 'Nenhum visitante cadastrado ainda.'));
   }
+
 
   /* ---------------- Ajustes ---------------- */
   function vistaAjustes() {
@@ -691,9 +937,14 @@
       texto(c, 'lojaNome', 'Nome da Loja', sc),
       texto(c, 'potencia', 'Potência', sc),
       texto(c, 'local', 'Local das sessões (como entra na abertura)', Object.assign({ area: true, linhas: 4 }, sc)),
-      marcar(c, 'registrarAtaAnterior', 'Registrar a leitura da ata anterior', { salvar: salvarConfigDepois }),
-      marcar(c, 'registrarExpediente', 'Registrar o expediente decifrado', { salvar: salvarConfigDepois }),
-      h('p', { class: 'ajuda versao' }, 'Sistema de Atas Cáritas 268 · versão 1.0')
+      texto(c, 'registroPresenca', 'Onde a presença é registrada (entra como “conforme registro …”)', Object.assign({ placeholder: 'no Livro de Presenças da Loja' }, sc)),
+      marcar(c, 'registrarAtaAnterior', 'Registrar a Ata da última reunião', { salvar: salvarConfigDepois, padraoVerdadeiro: true }),
+      marcar(c, 'registrarExpediente', 'Registrar a correspondência, atos e decretos', { salvar: salvarConfigDepois, padraoVerdadeiro: true }),
+      texto(c, 'tituloOrdinaria', 'Nome da sessão ordinária no título da ata', Object.assign({ placeholder: 'Econômica', ajuda: 'O título fica “Ata nº 06 / 2026 – Sessão Econômica A∴M∴”.' }, sc)),
+      marcar(c, 'aberturaRitual', 'Registrar as formalidades de abertura (Loja coberta e Palavra recebida pelos Diáconos)', { salvar: salvarConfigDepois, padraoVerdadeiro: true }),
+      marcar(c, 'fechamentoRitual', 'Registrar o fechamento completo (“assim permanecendo até a próxima sessão ordinária…”)', { salvar: salvarConfigDepois, padraoVerdadeiro: true }),
+      marcar(c, 'abrevPontos', 'Usar os três pontos nas abreviações (V∴M∴, Ir∴). Desmarque para o estilo do Ritual do York: VM, Ir., MM', { salvar: salvarConfigDepois, padraoVerdadeiro: true }),
+      h('p', { class: 'ajuda versao' }, 'Sistema de Atas Cáritas 268 · versão 2.4 (Rito de York)')
     );
   }
 
@@ -706,5 +957,5 @@
     try { await S.sincronizar(); await S.carregar(); render(); aviso('Sincronizado com a planilha.'); } catch (e) { aviso(e.message, 'erro'); marcarStatus(); }
   });
   window.addEventListener('beforeunload', () => { const s = sessaoAtual(); if (timerSessao && s) { S.salvarSessao(s); } });
-  S.carregar().then(() => { verificarPosse(); render(); });
+  S.carregar().then(() => { migrarConfig(); verificarPosse(); render(); });
 })();

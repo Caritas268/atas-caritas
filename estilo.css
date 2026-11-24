@@ -123,6 +123,7 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 .subcartao { border-left: 3px solid var(--ouro-claro); padding-left: .6rem; display: flex; flex-direction: column; gap: .5rem; }
 .previa { margin: 0; font-size: .88rem; color: var(--suave); background: var(--fundo); border-radius: 8px; padding: .45rem .6rem; }
 .previa::before { content: "Na agenda: "; font-weight: 600; }
+.previa.descanso::before { content: "Atenção: "; }
 .atalhos { display: flex; flex-wrap: wrap; gap: .35rem; }
 .chip { min-height: 32px; padding: .2rem .65rem; border-radius: 99px; font-size: .84rem; background: var(--fundo); }
 .pendencias { background: var(--ouro-claro); border-radius: var(--raio); padding: .7rem .9rem; display: flex; flex-direction: column; gap: .4rem; }
@@ -134,7 +135,7 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 .presenca { border-bottom: 1px solid var(--fundo); }
 .acoes-gerar { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .5rem; }
 .tabela { display: flex; flex-direction: column; gap: .4rem; }
-.linha-tabela { display: grid; grid-template-columns: 1fr 100px auto auto; gap: .4rem; align-items: center; background: var(--branco); border: 1px solid var(--borda); border-radius: var(--raio); padding: .4rem; }
+.linha-tabela { display: grid; grid-template-columns: 90px 1fr 100px auto auto; gap: .4rem; align-items: center; background: var(--branco); border: 1px solid var(--borda); border-radius: var(--raio); padding: .4rem; }
 .linha-tabela.visit { grid-template-columns: 1.4fr 80px 1fr 1fr auto; }
 .linha-tabela.inativo input { color: var(--suave); text-decoration: line-through; }
 .botao-arquivo { border: 1px solid var(--borda); background: var(--branco); border-radius: var(--raio); padding: .6rem .9rem; cursor: pointer; min-height: 44px; display: inline-flex; align-items: center; }
@@ -143,10 +144,11 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 
 /* Folha da ata (prévia e impressão) */
 .folha { background: #fff; border: 1px solid var(--borda); border-radius: 4px; padding: 28px 30px; box-shadow: 0 2px 10px rgba(0,0,0,.06); overflow-x: auto; }
-.folha-conteudo { font-family: Ebrima, "Segoe UI", system-ui, sans-serif; font-size: 11pt; color: #000; line-height: 1.5; }
+.folha-conteudo { font-family: Ebrima, "Segoe UI", system-ui, sans-serif; font-size: 11pt; color: #000; line-height: 18pt; }
+.folha-conteudo p.vazio-linha { min-height: 18pt; }
 .folha-conteudo p { text-align: justify; margin: 0; }
 .folha-conteudo p.titulo-ata { text-align: left; margin: 1.2em 0 .8em; }
-.timbre { display: grid; grid-template-columns: 70px 1fr 70px; gap: 10px; align-items: center; text-align: center; font-size: 9pt; line-height: 1.6; margin-bottom: 1em; }
+.timbre { display: grid; grid-template-columns: 80px 1fr 80px; justify-items: center; gap: 10px; align-items: center; text-align: center; font-size: 9pt; line-height: 1.6; margin-bottom: 1em; }
 .timbre img { width: 70px; height: auto; }
 .timbre .tb { font-weight: 700; }
 .timbre .pequena { font-size: 7pt; font-weight: 700; }
@@ -164,7 +166,8 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 @media (max-width: 560px) {
   .linha2 { grid-template-columns: 1fr; }
   .linha4 { grid-template-columns: 1fr 1fr; }
-  .linha-tabela { grid-template-columns: 1fr 80px; }
+  .linha-tabela { grid-template-columns: 80px 1fr 80px; }
+  .linha-tabela .marcar { grid-column: 2 / span 2; }
   .linha-tabela .marcar, .linha-tabela .etiqueta { grid-column: span 1; }
   .linha-tabela.visit { grid-template-columns: 1fr 80px; }
   .linha-tabela.visit input:nth-of-type(2), .linha-tabela.visit input:nth-of-type(3) { grid-column: span 2; }
@@ -174,9 +177,28 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 }
 
 @media print {
-  @page { size: A4; margin: 2cm 2cm 1.2cm 3cm; }
+  @page { size: A4; margin: 2cm 3cm; }
   body { background: #fff; padding: 0; }
   .topo, .abas, .conteudo, .aviso-flutuante { display: none !important; }
   .impressao { display: block; }
   .folha-conteudo { font-size: 11pt; }
 }
+/* Graus e datas */
+.subcartao.graus { padding: 12px; }
+.graus-topo { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+.graus-datas { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.graus-datas .campo { margin: 0; }
+.graus-datas input { min-width: 0; width: 100%; }
+@media (max-width: 640px) { .graus-datas { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* 2.4: CIM e cadastro de visitantes */
+.linha-tabela.cabecalho { background: none; border: 0; padding: 0 .4rem; font-size: .8rem; color: var(--suave); }
+.linha-tabela .cim { min-width: 0; }
+.cartao-visitante { padding: 12px; }
+.visit-topo { display: grid; grid-template-columns: 1fr 140px; gap: 8px; }
+.visit-campos { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.cartao-visitante .campo { margin: 0; }
+.cartao-visitante input, .cartao-visitante select, .cartao-visitante textarea { min-width: 0; width: 100%; }
+.linha-botoes { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.linha-botoes input[type=search] { flex: 1 1 220px; }
+@media (max-width: 640px) { .visit-campos { grid-template-columns: 1fr; } .visit-topo { grid-template-columns: 1fr 110px; } }

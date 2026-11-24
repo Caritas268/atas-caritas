@@ -17,10 +17,14 @@
     }).join('');
   }
 
+  /* Espaçamento EXATO (18 pt) em todas as linhas: o "∴" usa outra fonte, e com o
+     espaçamento automático as linhas que têm o símbolo ficavam mais altas que as outras. */
+  const ENTRELINHA = '<w:spacing w:before="0" w:after="0" w:line="360" w:lineRule="exact"/>';
   function paragrafo(p) {
+    if (p.vazio) return '<w:p><w:pPr>' + ENTRELINHA + '<w:jc w:val="both"/><w:rPr><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:pPr></w:p>';
     const pPr = p.titulo
-      ? '<w:pPr><w:spacing w:before="0" w:after="240" w:line="360" w:lineRule="auto"/><w:jc w:val="left"/></w:pPr>'
-      : '<w:pPr><w:spacing w:before="0" w:after="0" w:line="360" w:lineRule="auto"/><w:jc w:val="both"/></w:pPr>';
+      ? '<w:pPr><w:spacing w:before="0" w:after="240" w:line="360" w:lineRule="exact"/><w:jc w:val="left"/></w:pPr>'
+      : '<w:pPr>' + ENTRELINHA + '<w:jc w:val="both"/></w:pPr>';
     return '<w:p>' + pPr + p.runs.map((r) => run(r.t, r.b, r.i)).join('') + '</w:p>';
   }
 
