@@ -128,6 +128,16 @@
     if (arr.length <= 1) return arr.join('');
     return arr.slice(0, -1).join(', ') + ' e ' + arr[arr.length - 1];
   }
+  /* Potência do visitante só aparece quando não é a GLMERGS */
+  function potenciaVisitante(v) {
+    const pot = semPonto((v.potencia || '').trim());
+    if (!pot) return '';
+    const n = pot.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+    if (n === 'GLMERGS' || n.indexOf('GRANDE LOJA MACONICA DO ESTADO DO RIO GRANDE DO SUL') >= 0) return '';
+    /* "à" para Grande Loja (GL...) e Confederação; "ao" para Grande Oriente (GO...) e demais */
+    const fem = /^(GL|GRANDE LOJA|CONFEDERACAO|CMSB|COMAB)/.test(n);
+    return ', jurisdicionad' + (v.loja ? 'a' : 'o') + (fem ? ' à ' : ' ao ') + pot;
+  }
   function pessoa(p) {
     if (!p) return '';
     if (typeof p === 'string') return p;
@@ -606,7 +616,7 @@
     tp += '.';
     if (vis.length) {
       tp += ' Houve ainda a presença de ' + (vis.length === 1 ? 'um Irmão visitante: ' : E.numero(vis.length) + ' Irmãos visitantes: ') +
-        vis.map((v) => pessoa(v) + (v.cargo ? ', ' + semPonto(v.cargo) : '') + (v.loja ? ', da ' + semPonto(v.loja) : '')).join('; ') +
+        vis.map((v) => pessoa(v) + (v.cargo ? ', ' + semPonto(v.cargo) : '') + (v.loja ? ', da ' + semPonto(v.loja) : '') + potenciaVisitante(v)).join('; ') +
         (vis.length === 1 ? ', devidamente registrado' : ', devidamente registrados') + ' no Livro de Visitantes da Loja.';
     } else tp += ' Não houve Irmãos visitantes.';
     parte(b('PRESENÇA DOS OBREIROS DA LOJA E VISITANTES:'), n(' ' + tp));

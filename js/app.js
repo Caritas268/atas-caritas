@@ -156,7 +156,13 @@
   }
   function gerarAta(s) {
     const cfg = Object.assign({}, S.db.config, { titulares: titularesNaData(s.data) });
-    return F.gerar(sessaoComGrausDaData(s), cfg);
+    const c = sessaoComGrausDaData(s);
+    /* Completa Loja e Potência dos visitantes com o cadastro, quando ficaram em branco na ata */
+    c.visitantes = (c.visitantes || []).map((v) => {
+      const cad = visitanteDoCadastro(v.nome); if (!cad) return v;
+      return Object.assign({}, v, { loja: v.loja || cad.loja || '', potencia: v.potencia || cad.potencia || '' });
+    });
+    return F.gerar(c, cfg);
   }
   /* Ajustes da versão 2.2 nos dados já salvos */
   function migrarConfig() {
@@ -170,6 +176,14 @@
     let dl = document.getElementById('dl-pessoas');
     if (!dl) { dl = h('datalist', { id: 'dl-pessoas' }); document.body.append(dl); }
     dl.replaceChildren(...todasPessoas().sort(ALFA).map((p) => h('option', { value: p.nome }, rotuloGrau(p.grau) + (p.loja ? ' · ' + p.loja : ''))));
+    /* Só os visitantes cadastrados, para a caixa de visitantes da ata */
+    let dv = document.getElementById('dl-visitantes');
+    if (!dv) { dv = h('datalist', { id: 'dl-visitantes' }); document.body.append(dv); }
+    dv.replaceChildren(...S.db.visitantes.filter((v) => v.nome).slice().sort(ALFA).map((v) => h('option', { value: v.nome }, [rotuloGrau(v.grau), v.loja, v.potencia].filter(Boolean).join(' · '))));
+  }
+  function visitanteDoCadastro(nome) {
+    const n = (nome || '').trim().toLowerCase();
+    return n ? S.db.visitantes.find((v) => (v.nome || '').trim().toLowerCase() === n) : null;
   }
 
   /* Pessoa = { nome, grau } com nome sugerido do cadastro */
@@ -179,9 +193,19 @@
     const sel = h('select', { class: 'grau', 'aria-label': 'Grau', onchange: (e) => { p.grau = e.target.value; salvarSessaoDepois(); } },
       GRAU_OPC.map(([v, r]) => h('option', { value: v, selected: p.grau === v }, r)));
     const inp = h('input', {
-      value: p.nome || '', list: 'dl-pessoas', placeholder: op.placeholder || 'Nome do Irmão', autocomplete: 'off',
+      value: p.nome || '', list: op.soVisitantes ? 'dl-visitantes' : 'dl-pessoas', placeholder: op.placeholder || 'Nome do Irmão', autocomplete: 'off',
       oninput: (e) => {
         p.nome = e.target.value;
+        if (op.soVisitantes) {
+          /* Visitante do cadastro: puxa grau, Loja e nº, Potência e cargo */
+          const v = visitanteDoCadastro(p.nome);
+          if (v) {
+            if (v.grau) { p.grau = v.grau; sel.value = v.grau; }
+            ['loja', 'potencia', 'cargo'].forEach((c) => { if (v[c]) p[c] = v[c]; });
+            salvarSessaoDepois(); render(); return;
+          }
+          salvarSessaoDepois(); return;
+        }
         const achado = acharPessoa(p.nome);
         if (achado) {
           const irm = irmaoDoCadastro(achado.nome); const s = sessaoAtual();
@@ -642,13 +666,14 @@
         ],
       h('h3', {}, 'Irmãos visitantes'),
       (s.visitantes || []).map((v, i) => h('div', { class: 'subcartao' },
-        pessoaCampo(s.visitantes, i, null, { placeholder: 'Nome do visitante', comLoja: true, remover: () => { s.visitantes.splice(i, 1); salvarSessaoDepois(); render(); } }),
+        pessoaCampo(s.visitantes, i, null, { placeholder: 'Nome do visitante (escolha do cadastro)', comLoja: true, soVisitantes: true, remover: () => { s.visitantes.splice(i, 1); salvarSessaoDepois(); render(); } }),
         h('div', { class: 'linha2' },
           texto(v, 'loja', null, { placeholder: 'Loja e número (ex.: Loja David nº 176)' }),
-          texto(v, 'cargo', null, { placeholder: 'Cargo, se houver (ex.: VM da Loja David)' })),
+          texto(v, 'potencia', null, { placeholder: 'Potência (ex.: GLMERGS, GORGS, GOB-RS)' })),
+        texto(v, 'cargo', null, { placeholder: 'Cargo, se houver (ex.: VM da Loja David)' }),
         marcar(v, 'leste', 'Convidado a sentar-se no Leste'))),
-      h('button', { type: 'button', class: 'link', onclick: () => { s.visitantes = s.visitantes || []; s.visitantes.push({ nome: '', grau: '', loja: '', cargo: '' }); render(); } }, '+ visitante'),
-      h('p', { class: 'ajuda' }, 'Visitantes novos são guardados no cadastro ao gerar a ata. CIM, Potência, telefone e e-mail ficam em Cadastro › Visitantes.')
+      h('button', { type: 'button', class: 'link', onclick: () => { s.visitantes = s.visitantes || []; s.visitantes.push({ nome: '', grau: '', loja: '', potencia: '', cargo: '' }); render(); } }, '+ visitante'),
+      h('p', { class: 'ajuda' }, 'Ao escolher um visitante do cadastro, grau, Loja, Potência e cargo vêm sozinhos. Se a Potência não for a GLMERGS, ela sai na ata. Visitantes novos são guardados no cadastro ao gerar a ata.')
     );
   }
 
@@ -758,7 +783,7 @@
     let mudou = false;
     (s.visitantes || []).filter((v) => v.nome).forEach((v) => {
       const ex = S.db.visitantes.find((x) => x.nome.toLowerCase() === v.nome.trim().toLowerCase());
-      if (!ex) { S.db.visitantes.push({ id: S.novoId('v'), nome: v.nome.trim(), grau: v.grau || '', cim: '', loja: v.loja || '', potencia: '', cargo: v.cargo || '', celular: '', email: '', observacoes: '' }); mudou = true; }
+      if (!ex) { S.db.visitantes.push({ id: S.novoId('v'), nome: v.nome.trim(), grau: v.grau || '', cim: '', loja: v.loja || '', potencia: v.potencia || '', cargo: v.cargo || '', celular: '', email: '', observacoes: '' }); mudou = true; }
     });
     if (mudou) salvarListaDepois('visitantes');
   }
@@ -964,7 +989,7 @@
       marcar(c, 'aberturaRitual', 'Registrar as formalidades de abertura (Loja coberta e Palavra recebida pelos Diáconos)', { salvar: salvarConfigDepois, padraoVerdadeiro: true }),
       marcar(c, 'fechamentoRitual', 'Registrar o fechamento completo (“assim permanecendo até a próxima sessão ordinária…”)', { salvar: salvarConfigDepois, padraoVerdadeiro: true }),
       marcar(c, 'abrevPontos', 'Usar os três pontos nas abreviações (V∴M∴, Ir∴). Desmarque para o estilo do Ritual do York: VM, Ir., MM', { salvar: salvarConfigDepois, padraoVerdadeiro: true }),
-      h('p', { class: 'ajuda versao' }, 'Sistema de Atas Cáritas 268 · versão 2.6 (Rito de York)')
+      h('p', { class: 'ajuda versao' }, 'Sistema de Atas Cáritas 268 · versão 2.7 (Rito de York)')
     );
   }
 
