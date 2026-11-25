@@ -69,6 +69,8 @@
       value: obj[chave] || '', placeholder: op.placeholder || '', type: op.tipo || 'text',
       oninput: (e) => { if (op.tipo === 'date' && !dataCompleta(e.target.value)) return; obj[chave] = op.tipo === 'number' ? Number(e.target.value) : e.target.value; (op.salvar || salvarSessaoDepois)(); if (op.aoMudar) op.aoMudar(); }
     };
+    if (op.lista) props.list = op.lista;
+    if (op.aoSair) props.onchange = (e) => op.aoSair(e.target);
     const ctl = op.area ? h('textarea', Object.assign(props, { rows: op.linhas || 3 })) : h('input', props);
     if (op.area) ctl.value = obj[chave] || '';
     return rotulo === null ? ctl : campo(rotulo, ctl, op.ajuda);
@@ -179,7 +181,95 @@
     /* Só os visitantes cadastrados, para a caixa de visitantes da ata */
     let dv = document.getElementById('dl-visitantes');
     if (!dv) { dv = h('datalist', { id: 'dl-visitantes' }); document.body.append(dv); }
+    atualizarListasVisitantes();
     dv.replaceChildren(...S.db.visitantes.filter((v) => v.nome).slice().sort(ALFA).map((v) => h('option', { value: v.nome }, [rotuloGrau(v.grau), v.loja, v.potencia].filter(Boolean).join(' · '))));
+  }
+  /* ---------- Visitantes: máscaras, lojas, CIM e histórico de visitas ---------- */
+  const semAc = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const soDigitos = (t) => String(t || '').replace(/\D/g, '');
+  function mascaraTelefone(t) {
+    let d = soDigitos(t);
+    if (d.length > 11 && d.startsWith('55')) d = d.slice(2);
+    if (d.length === 11) return '(' + d.slice(0, 2) + ') ' + d.slice(2, 7) + '-' + d.slice(7);
+    if (d.length === 10) return '(' + d.slice(0, 2) + ') ' + d.slice(2, 6) + '-' + d.slice(6);
+    if (d.length === 9) return d.slice(0, 5) + '-' + d.slice(5);
+    if (d.length === 8) return d.slice(0, 4) + '-' + d.slice(4);
+    return String(t || '').trim();
+  }
+  /* "campos lobo 1310", "Campos Lobo n. 1310" -> "Loja Campos Lobo nº 1310" */
+  function mascaraLoja(t) {
+    let x = String(t || '').trim().replace(/\s+/g, ' ');
+    if (!x) return '';
+    /* tudo em minúsculas ou maiúsculas: "campos lobo" -> "Campos Lobo" */
+    if (x === x.toLowerCase() || x === x.toUpperCase()) x = x.toLowerCase().replace(/(^|\s)(\S)/g, (m, e, c) => e + c.toUpperCase()).replace(/ (De|Da|Do|Das|Dos|E) /g, (m) => m.toLowerCase());
+    x = x.replace(/\s*,?\s*(?:n[º°o]\.?|n\.|num\.?|n[úu]mero|#)\s*(\d+)\s*$/i, ' nº $1');
+    if (!/ nº \d+$/.test(x)) x = x.replace(/\s+(\d+)$/, ' nº $1');
+    if (/^loja\b/i.test(x)) x = 'Loja' + x.slice(4);
+    else if (!/^(a\.?r\.?l\.?s\.?|aug\.?|augusta|respeit[áa]vel)\b/i.test(x)) x = 'Loja ' + x;
+    return x;
+  }
+  /* Lojas e Potências já usadas no cadastro, para escolher em vez de digitar */
+  function lojasConhecidas() {
+    const m = {};
+    S.db.visitantes.forEach((v) => { const k = semAc(v.loja); if (k && (!m[k] || (!m[k].potencia && v.potencia))) m[k] = { loja: v.loja.trim(), potencia: (v.potencia || '').trim() }; });
+    return Object.values(m).sort((a, b) => a.loja.localeCompare(b.loja, 'pt', { sensitivity: 'base' }));
+  }
+  function potenciasConhecidas() {
+    const m = {}; ['GLMERGS'].concat(S.db.visitantes.map((v) => (v.potencia || '').trim())).forEach((p) => { if (p && !m[semAc(p)]) m[semAc(p)] = p; });
+    return Object.values(m).sort((a, b) => a.localeCompare(b, 'pt', { sensitivity: 'base' }));
+  }
+  function atualizarListasVisitantes() {
+    const garante = (id) => { let d = document.getElementById(id); if (!d) { d = h('datalist', { id }); document.body.append(d); } return d; };
+    garante('dl-lojas').replaceChildren(...lojasConhecidas().map((l) => h('option', { value: l.loja }, l.potencia)));
+    garante('dl-potencias').replaceChildren(...potenciasConhecidas().map((p) => h('option', { value: p })));
+  }
+  /* Ao sair do campo Loja: aplica a máscara e, se a Loja já é conhecida, traz a Potência */
+  function sairDaLoja(obj, el, salvar) {
+    obj.loja = mascaraLoja(el.value); el.value = obj.loja;
+    const conhecida = lojasConhecidas().find((l) => semAc(l.loja) === semAc(obj.loja));
+    if (conhecida) { obj.loja = conhecida.loja; el.value = obj.loja; }
+    if (conhecida && conhecida.potencia && !obj.potencia) {
+      obj.potencia = conhecida.potencia;
+      const pot = el.closest('.subcartao') && el.closest('.subcartao').querySelector('input[data-campo=potencia]');
+      if (pot) pot.value = obj.potencia;
+    }
+    salvar(); atualizarListasVisitantes();
+  }
+  /* Outros cadastros com o mesmo CIM */
+  function mesmoCim(v) {
+    const c = soDigitos(v.cim);
+    return c ? S.db.visitantes.filter((x) => x !== v && soDigitos(x.cim) === c) : [];
+  }
+  function textoCimRepetido(v) {
+    const outros = mesmoCim(v);
+    return outros.length ? 'Atenção: o CIM ' + v.cim + ' também está no cadastro de ' + outros.map((x) => x.nome || '(sem nome)').join(', ') + '. Confira se é o mesmo Irmão; se for, complete um cadastro e exclua o outro.' : '';
+  }
+  /* Sessões em que o visitante consta na lista de visitantes da ata */
+  function visitasDe(cad) {
+    const n = semAc(cad.nome), cim = soDigitos(cad.cim), out = [];
+    S.db.sessoes.forEach((s) => (s.visitantes || []).forEach((x) => {
+      if (!x.nome || /^\[/.test(x.nome)) return;
+      const bate = (x.vid && x.vid === cad.id) || (n && semAc(x.nome) === n) || (cim && soDigitos(x.cim) === cim);
+      if (bate && !out.some((o) => o.id === s.id)) out.push({ id: s.id, data: s.data || '', numero: s.numero });
+    }));
+    return out.sort((a, b) => a.data.localeCompare(b.data));
+  }
+  const ddmm = (d) => d ? d.slice(8, 10) + '/' + d.slice(5, 7) : '';
+  const ordinal = (n) => n + 'ª';
+  function resumoVisitas(cad) {
+    const vs = visitasDe(cad);
+    if (!vs.length) return 'Nenhuma visita registrada nas atas ainda.';
+    const anos = {}; vs.forEach((x) => { const a = x.data.slice(0, 4); (anos[a] = anos[a] || []).push(x); });
+    return Object.keys(anos).sort().reverse().map((a) => a + ': ' + anos[a].length + (anos[a].length === 1 ? ' visita' : ' visitas') + ' (' + anos[a].map((x) => ddmm(x.data) + (x.numero ? ', Ata ' + String(x.numero).padStart(2, '0') : '')).join('; ') + ')').join(' · ');
+  }
+  /* Na ata: "3ª visita em 2026 (antes: 29/07, 02/09)" */
+  function visitaNoAno(cad, s) {
+    if (!cad || !s || !s.data) return '';
+    const ano = s.data.slice(0, 4);
+    const vs = visitasDe(cad).filter((x) => x.data.slice(0, 4) === ano && x.data <= s.data);
+    const ant = vs.filter((x) => x.id !== s.id);
+    const n = ant.length + 1;
+    return ordinal(n) + ' visita em ' + ano + (ant.length ? ' (antes: ' + ant.map((x) => ddmm(x.data)).join(', ') + ')' : '');
   }
   function visitanteDoCadastro(nome) {
     const n = (nome || '').trim().toLowerCase();
@@ -201,10 +291,11 @@
           const v = visitanteDoCadastro(p.nome);
           if (v) {
             if (v.grau) { p.grau = v.grau; sel.value = v.grau; }
-            ['loja', 'potencia', 'cargo'].forEach((c) => { if (v[c]) p[c] = v[c]; });
+            ['loja', 'potencia', 'cargo', 'cim'].forEach((c) => { if (v[c]) p[c] = v[c]; });
+            p.vid = v.id;
             salvarSessaoDepois(); render(); return;
           }
-          salvarSessaoDepois(); return;
+          delete p.vid; salvarSessaoDepois(); return;
         }
         const achado = acharPessoa(p.nome);
         if (achado) {
@@ -667,9 +758,10 @@
       h('h3', {}, 'Irmãos visitantes'),
       (s.visitantes || []).map((v, i) => h('div', { class: 'subcartao' },
         pessoaCampo(s.visitantes, i, null, { placeholder: 'Nome do visitante (escolha do cadastro)', comLoja: true, soVisitantes: true, remover: () => { s.visitantes.splice(i, 1); salvarSessaoDepois(); render(); } }),
+        (() => { const cad = visitanteDoCadastro(v.nome); const t = cad ? visitaNoAno(cad, s) : ''; return t ? h('p', { class: 'ajuda visita-conta' }, t) : null; })(),
         h('div', { class: 'linha2' },
-          texto(v, 'loja', null, { placeholder: 'Loja e número (ex.: Loja David nº 176)' }),
-          texto(v, 'potencia', null, { placeholder: 'Potência (ex.: GLMERGS, GORGS, GOB-RS)' })),
+          texto(v, 'loja', null, { placeholder: 'Loja e número (ex.: Loja David nº 176)', lista: 'dl-lojas', aoSair: (el) => sairDaLoja(v, el, salvarSessaoDepois) }),
+          (() => { const c = texto(v, 'potencia', null, { placeholder: 'Potência (ex.: GLMERGS, GORGS, GOB-RS)', lista: 'dl-potencias' }); c.dataset.campo = 'potencia'; return c; })()),
         texto(v, 'cargo', null, { placeholder: 'Cargo, se houver (ex.: VM da Loja David)' }),
         marcar(v, 'leste', 'Convidado a sentar-se no Leste'))),
       h('button', { type: 'button', class: 'link', onclick: () => { s.visitantes = s.visitantes || []; s.visitantes.push({ nome: '', grau: '', loja: '', potencia: '', cargo: '' }); render(); } }, '+ visitante'),
@@ -783,7 +875,8 @@
     let mudou = false;
     (s.visitantes || []).filter((v) => v.nome).forEach((v) => {
       const ex = S.db.visitantes.find((x) => x.nome.toLowerCase() === v.nome.trim().toLowerCase());
-      if (!ex) { S.db.visitantes.push({ id: S.novoId('v'), nome: v.nome.trim(), grau: v.grau || '', cim: '', loja: v.loja || '', potencia: v.potencia || '', cargo: v.cargo || '', celular: '', email: '', observacoes: '' }); mudou = true; }
+      if (ex) { if (!v.vid) v.vid = ex.id; }
+      else { const id = S.novoId('v'); v.vid = id; S.db.visitantes.push({ id, nome: v.nome.trim(), grau: v.grau || '', cim: v.cim || '', loja: v.loja || '', potencia: v.potencia || '', cargo: v.cargo || '', celular: '', email: '', observacoes: '' }); mudou = true; }
     });
     if (mudou) salvarListaDepois('visitantes');
   }
@@ -867,11 +960,11 @@
     const busca = (estado.buscaGraus || '').trim().toLowerCase();
     const lista = S.db.irmaos.filter((i) => i.ativo !== false && (!busca || i.nome.toLowerCase().includes(busca)))
       .sort(ALFA);
-    return h('div', { class: 'formulario' },
+    return h('div', { class: 'formulario largura-total' },
       h('p', { class: 'ajuda' }, 'Registre as datas conforme forem acontecendo. A ata usa o grau que cada Irmão tinha na data da sessão. Sem datas, vale o grau do Quadro da Loja.'),
       S.modoGoogle() ? h('p', { class: 'ajuda' }, 'As datas também ficam nas colunas da aba “Irmaos” da planilha.') : null,
       h('input', { type: 'search', placeholder: 'Procurar Irmão', value: estado.buscaGraus || '', oninput: (e) => { estado.buscaGraus = e.target.value; const pos = e.target.selectionStart; render(); const el = app().querySelector('input[type=search]'); if (el) { el.focus(); el.setSelectionRange(pos, pos); } } }),
-      h('div', { class: 'pilha' }, lista.map((i) => h('div', { class: 'subcartao graus' },
+      h('div', { class: 'pilha listrada' }, lista.map((i, k) => h('div', { class: 'subcartao graus ' + (k % 2 ? 'listra-b' : 'listra-a') },
         h('div', { class: 'graus-topo' }, h('strong', {}, i.nome), h('span', { class: 'etiqueta' }, rotuloGrau(i.grau) || 'sem grau')),
         h('div', { class: 'graus-datas' }, DATAS_GRAU.map(([campo, rotulo]) => h('label', { class: 'campo' }, h('span', { class: 'rotulo' }, rotulo),
           h('input', { type: 'date', value: i[campo] || '', min: '1900-01-01', max: '2099-12-31', oninput: (e) => {
@@ -886,34 +979,115 @@
   /* Cadastro completo dos visitantes. Na ata saem só nome, grau, cargo e Loja; o resto fica guardado. */
   const CAMPOS_VISITANTE = [
     ['cim', 'CIM (opcional)', { placeholder: 'Se o Irmão souber', inputmode: 'numeric' }],
-    ['loja', 'Loja e nº', { placeholder: 'Ex.: Loja Acácia nº 12' }],
-    ['potencia', 'Potência', { placeholder: 'Ex.: GLMERGS, GORGS, GOB-RS' }],
+    ['celular', 'Celular / WhatsApp', { placeholder: 'Só os números: 54999121501', type: 'tel' }],
+    ['loja', 'Loja e nº', { placeholder: 'Escolha ou digite: Campos Lobo nº 1310', list: 'dl-lojas' }],
+    ['potencia', 'Potência', { placeholder: 'Ex.: GLMERGS, GORGS, GOB-RS', list: 'dl-potencias' }],
     ['cargo', 'Cargo (se for autoridade)', { placeholder: 'Ex.: 1º Grande Vigilante da GLMERGS' }],
-    ['celular', 'Celular / WhatsApp', { placeholder: '(51) 99999-9999', type: 'tel' }],
     ['email', 'E-mail', { placeholder: 'nome@exemplo.com', type: 'email' }]
   ];
+  /* Ajustes da versão 2.8 nos visitantes já salvos: tira a nota automática de visita (agora as visitas vêm das atas) */
+  function migrarVisitantes() {
+    let mudou = false;
+    S.db.visitantes.forEach((v) => {
+      const o = String(v.observacoes || '');
+      const n = o.replace(/\s*Visitou em [^.]*\(relat[óo]rio GLMERGS\)\.?/g, '').trim();
+      if (n !== o) { v.observacoes = n; mudou = true; }
+      if (v.celular && mascaraTelefone(v.celular) !== v.celular) { v.celular = mascaraTelefone(v.celular); mudou = true; }
+    });
+    if (mudou) salvarListaDepois('visitantes');
+  }
+  function cartaoVisitante(v, classe) {
+    const lista = S.db.visitantes;
+    const alterar = (c, val) => { v[c] = val; salvarListaDepois('visitantes'); };
+    const alertaCim = h('p', { class: 'alerta-cim' }, textoCimRepetido(v));
+    alertaCim.hidden = !alertaCim.textContent;
+    const campoVis = (c, rot, op) => {
+      const inp = h('input', Object.assign({ value: v[c] || '', 'data-campo': c, oninput: (e) => {
+        alterar(c, e.target.value);
+        if (c === 'cim') { alertaCim.textContent = textoCimRepetido(v); alertaCim.hidden = !alertaCim.textContent; }
+      } }, op));
+      if (c === 'celular') inp.onchange = (e) => { alterar(c, mascaraTelefone(e.target.value)); e.target.value = v.celular; };
+      if (c === 'loja') inp.onchange = (e) => sairDaLoja(v, e.target, () => salvarListaDepois('visitantes'));
+      if (c === 'potencia') inp.onchange = () => atualizarListasVisitantes();
+      return h('label', { class: 'campo c-' + c }, h('span', { class: 'rotulo' }, rot), inp);
+    };
+    const novo = classe === 'novo';
+    const botaoExcluir = h('button', { type: 'button', class: 'link perigo-texto', onclick: () => { if (confirm('Excluir ' + (v.nome || 'este visitante') + ' do cadastro? As atas já feitas não mudam.')) { lista.splice(lista.indexOf(v), 1); if (novo) estado.novoVisit = null; salvarListaDepois('visitantes'); render(); } } }, novo ? 'Cancelar' : 'Excluir');
+    return h('div', { class: 'subcartao cartao-visitante ' + classe, 'data-id': v.id },
+      novo ? h('p', { class: 'novo-titulo' }, 'Novo visitante: preencha e clique em Concluído') : null,
+      h('div', { class: 'visit-grade' },
+        h('label', { class: 'campo c-nome' }, h('span', { class: 'rotulo' }, 'Nome completo'), h('input', { value: v.nome || '', placeholder: 'Nome completo', oninput: (e) => alterar('nome', e.target.value) })),
+        h('label', { class: 'campo c-grau' }, h('span', { class: 'rotulo' }, 'Grau'), h('select', { onchange: (e) => alterar('grau', e.target.value) }, GRAU_OPC.map(([g, r]) => h('option', { value: g, selected: v.grau === g }, r)))),
+        CAMPOS_VISITANTE.map(([c, rot, op]) => campoVis(c, rot, op)),
+        h('label', { class: 'campo c-obs' }, h('span', { class: 'rotulo' }, 'Outras informações'), h('textarea', { rows: 1, value: v.observacoes || '', placeholder: 'Ex.: Oriente de Canoas/RS; aniversário; profissão', oninput: (e) => alterar('observacoes', e.target.value) })),
+        h('div', { class: 'campo c-visitas' }, h('span', { class: 'rotulo' }, 'Visitas à Loja'), h('p', { class: 'visitas-texto' }, resumoVisitas(v))),
+        novo ? null : h('div', { class: 'c-acoes' }, botaoExcluir)),
+      alertaCim,
+      novo ? h('div', { class: 'linha-botoes' },
+        h('button', { type: 'button', class: 'principal', onclick: () => {
+          if (!(v.nome || '').trim()) { aviso('Preencha o nome do visitante.'); return; }
+          estado.novoVisit = null; render();
+          const el = app().querySelector('.cartao-visitante[data-id="' + v.id + '"]');
+          if (el) { el.scrollIntoView({ block: 'center' }); el.classList.add('destaque'); setTimeout(() => el.classList.remove('destaque'), 1600); }
+        } }, 'Concluído'),
+        botaoExcluir) : null);
+  }
   function tabelaVisitantes() {
     const lista = S.db.visitantes;
-    const busca = (estado.buscaVisit || '').trim().toLowerCase();
-    const vistos = lista.filter((v) => !busca || [v.nome, v.loja, v.potencia, v.cim].join(' ').toLowerCase().includes(busca))
+    atualizarListasVisitantes();
+    const busca = semAc(estado.buscaVisit);
+    const novo = estado.novoVisit ? lista.find((v) => v.id === estado.novoVisit) : null;
+    if (!novo) estado.novoVisit = null;
+    const vistos = lista.filter((v) => v !== novo && (!busca || semAc([v.nome, v.loja, v.potencia, v.cim].join(' ')).includes(busca)))
       .sort((a, b) => (!a.nome) - (!b.nome) || ALFA(a, b));
-    const alterar = (v, c, val) => { v[c] = val; salvarListaDepois('visitantes'); };
-    return h('div', { class: 'formulario' },
-      h('p', { class: 'ajuda' }, 'Cadastre aqui os visitantes do Livro de Presenças. Na ata saem só o nome, o grau, o cargo e a Loja; CIM, Potência, telefone, e-mail e observações ficam guardados no sistema. Ao digitar o nome na presença da ata, os dados vêm sozinhos.'),
+    return h('div', { class: 'formulario largura-total' },
+      h('p', { class: 'ajuda' }, 'Cadastre aqui os visitantes do Livro de Presenças. Na ata saem o nome, o grau, o cargo, a Loja e a Potência (quando não é a GLMERGS); CIM, telefone, e-mail e observações ficam guardados. As visitas são contadas pelas atas em que o Irmão consta como visitante.'),
       S.modoGoogle() ? h('p', { class: 'ajuda' }, 'Tudo fica também na aba “Visitantes” da planilha.') : null,
       h('div', { class: 'linha-botoes' },
         h('input', { type: 'search', placeholder: 'Procurar por nome, Loja, Potência ou CIM', value: estado.buscaVisit || '', oninput: (e) => { estado.buscaVisit = e.target.value; const pos = e.target.selectionStart; render(); const el = app().querySelector('input[type=search]'); if (el) { el.focus(); el.setSelectionRange(pos, pos); } } }),
-        h('button', { type: 'button', class: 'secundario', onclick: () => { estado.buscaVisit = ''; lista.push({ id: S.novoId('v'), nome: '', grau: 'MM', cim: '', loja: '', potencia: '', cargo: '', celular: '', email: '', observacoes: '' }); render(); const el = app().querySelector('.cartao-visitante input'); if (el) el.focus(); } }, '+ Visitante')),
+        h('button', { type: 'button', class: 'secundario', onclick: () => {
+          if (novo) { aviso('Conclua primeiro o visitante que está em edição.'); return; }
+          const v = { id: S.novoId('v'), nome: '', grau: 'MM', cim: '', loja: '', potencia: '', cargo: '', celular: '', email: '', observacoes: '' };
+          lista.push(v); estado.novoVisit = v.id; render();
+          const el = app().querySelector('.cartao-visitante.novo input'); if (el) { el.scrollIntoView({ block: 'center' }); el.focus(); }
+        } }, '+ Visitante'),
+        h('button', { type: 'button', class: 'secundario', onclick: () => { estado.relVisit = !estado.relVisit; render(); } }, estado.relVisit ? 'Fechar relatório' : 'Relatório de visitas')),
+      estado.relVisit ? relatorioVisitas() : null,
       h('p', { class: 'ajuda' }, lista.length + (lista.length === 1 ? ' visitante cadastrado' : ' visitantes cadastrados')),
-      h('div', { class: 'pilha' }, vistos.map((v) => h('div', { class: 'subcartao cartao-visitante' },
-        h('div', { class: 'visit-topo' },
-          h('label', { class: 'campo' }, h('span', { class: 'rotulo' }, 'Nome completo'), h('input', { value: v.nome || '', placeholder: 'Nome completo', oninput: (e) => alterar(v, 'nome', e.target.value) })),
-          h('label', { class: 'campo' }, h('span', { class: 'rotulo' }, 'Grau'), h('select', { onchange: (e) => alterar(v, 'grau', e.target.value) }, GRAU_OPC.map(([g, r]) => h('option', { value: g, selected: v.grau === g }, r))))),
-        h('div', { class: 'visit-campos' }, CAMPOS_VISITANTE.map(([c, rot, op]) => h('label', { class: 'campo' }, h('span', { class: 'rotulo' }, rot),
-          h('input', Object.assign({ value: v[c] || '', oninput: (e) => alterar(v, c, e.target.value) }, op))))),
-        h('label', { class: 'campo' }, h('span', { class: 'rotulo' }, 'Outras informações'), h('textarea', { rows: 2, value: v.observacoes || '', placeholder: 'Ex.: Loja visitada junto com o Ir∴ Fulano; aniversário; profissão', oninput: (e) => alterar(v, 'observacoes', e.target.value) })),
-        h('div', { class: 'linha-botoes' }, h('button', { type: 'button', class: 'link perigo-texto', onclick: () => { if (confirm('Excluir ' + (v.nome || 'este visitante') + ' do cadastro? As atas já feitas não mudam.')) { lista.splice(lista.indexOf(v), 1); salvarListaDepois('visitantes'); render(); } } }, 'Excluir do cadastro'))))),
-      vistos.length ? null : h('p', { class: 'vazio' }, busca ? 'Nenhum visitante encontrado.' : 'Nenhum visitante cadastrado ainda.'));
+      novo ? cartaoVisitante(novo, 'novo') : null,
+      h('div', { class: 'pilha listrada' }, vistos.map((v, k) => cartaoVisitante(v, k % 2 ? 'listra-b' : 'listra-a'))),
+      vistos.length || novo ? null : h('p', { class: 'vazio' }, busca ? 'Nenhum visitante encontrado.' : 'Nenhum visitante cadastrado ainda.'));
+  }
+  /* Relatório do ano: cada visitante, quantas vezes veio e em quais sessões */
+  function dadosRelatorio(ano) {
+    return S.db.visitantes.filter((v) => v.nome).map((v) => ({ v, vs: visitasDe(v).filter((x) => x.data.slice(0, 4) === ano) }))
+      .filter((x) => x.vs.length).sort((a, b) => b.vs.length - a.vs.length || ALFA(a.v, b.v));
+  }
+  function relatorioVisitas() {
+    const anos = Array.from(new Set(S.db.sessoes.filter((s) => (s.visitantes || []).some((x) => x.nome && !/^\[/.test(x.nome))).map((s) => (s.data || '').slice(0, 4)).filter(Boolean))).sort().reverse();
+    if (!estado.anoRel || !anos.includes(estado.anoRel)) estado.anoRel = anos[0] || String(new Date().getFullYear());
+    const ano = estado.anoRel, dados = dadosRelatorio(ano);
+    const total = dados.reduce((t, x) => t + x.vs.length, 0);
+    const desc = (v) => [rotuloGrau(v.grau), v.loja, v.potencia].filter(Boolean).join(' · ');
+    const imprimir = () => {
+      const w = window.open('', '_blank'); if (!w) { aviso('O navegador bloqueou a janela. Permita pop-ups para este site.'); return; }
+      const esc = (t) => String(t || '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+      w.document.write('<!doctype html><meta charset="utf-8"><title>Visitantes ' + ano + '</title><style>body{font-family:Arial,sans-serif;margin:24px;color:#1f2430}h1{font-size:18px}table{border-collapse:collapse;width:100%;font-size:13px}td,th{border:1px solid #ccc;padding:6px;text-align:left;vertical-align:top}th{background:#eef1f7}tr:nth-child(even) td{background:#f7f8fb}</style>' +
+        '<h1>Irmãos visitantes em ' + ano + ' – ' + esc(S.db.config.lojaNome || '') + '</h1><p>' + dados.length + ' visitantes, ' + total + ' visitas.</p><table><tr><th>Visitante</th><th>Loja e Potência</th><th>Visitas</th><th>Sessões</th></tr>' +
+        dados.map((x) => '<tr><td>' + esc(rotuloGrau(x.v.grau) + ' ' + x.v.nome) + '</td><td>' + esc([x.v.loja, x.v.potencia].filter(Boolean).join(' · ')) + '</td><td>' + x.vs.length + '</td><td>' + esc(x.vs.map((s) => E.dataCurta(s.data) + (s.numero ? ' (Ata ' + String(s.numero).padStart(2, '0') + ')' : '')).join('; ')) + '</td></tr>').join('') + '</table>');
+      w.document.close(); w.focus(); w.print();
+    };
+    return h('div', { class: 'relatorio-visitas' },
+      h('div', { class: 'linha-botoes' },
+        h('label', { class: 'campo' }, h('span', { class: 'rotulo' }, 'Ano'), h('select', { onchange: (e) => { estado.anoRel = e.target.value; render(); } }, (anos.length ? anos : [ano]).map((a) => h('option', { value: a, selected: a === ano }, a)))),
+        h('button', { type: 'button', class: 'secundario', onclick: imprimir }, 'Imprimir ou salvar PDF')),
+      h('p', { class: 'ajuda' }, dados.length ? dados.length + ' visitantes e ' + total + ' visitas em ' + ano + ', pelas atas preenchidas.' : 'Nenhum visitante registrado nas atas de ' + ano + '.'),
+      dados.length ? h('div', { class: 'tabela-rel' },
+        h('div', { class: 'rel-linha cabecalho' }, h('span', {}, 'Visitante'), h('span', {}, 'Visitas'), h('span', {}, 'Sessões')),
+        dados.map((x, k) => h('div', { class: 'rel-linha ' + (k % 2 ? 'listra-b' : 'listra-a') },
+          h('span', {}, h('strong', {}, x.v.nome), h('small', {}, desc(x.v))),
+          h('span', { class: 'rel-num' }, String(x.vs.length)),
+          h('span', {}, x.vs.map((s) => ddmm(s.data) + (s.numero ? ' (Ata ' + String(s.numero).padStart(2, '0') + ')' : '')).join('; '))))) : null);
   }
 
 
@@ -989,7 +1163,7 @@
       marcar(c, 'aberturaRitual', 'Registrar as formalidades de abertura (Loja coberta e Palavra recebida pelos Diáconos)', { salvar: salvarConfigDepois, padraoVerdadeiro: true }),
       marcar(c, 'fechamentoRitual', 'Registrar o fechamento completo (“assim permanecendo até a próxima sessão ordinária…”)', { salvar: salvarConfigDepois, padraoVerdadeiro: true }),
       marcar(c, 'abrevPontos', 'Usar os três pontos nas abreviações (V∴M∴, Ir∴). Desmarque para o estilo do Ritual do York: VM, Ir., MM', { salvar: salvarConfigDepois, padraoVerdadeiro: true }),
-      h('p', { class: 'ajuda versao' }, 'Sistema de Atas Cáritas 268 · versão 2.7 (Rito de York)')
+      h('p', { class: 'ajuda versao' }, 'Sistema de Atas Cáritas 268 · versão 2.8 (Rito de York)')
     );
   }
 
@@ -1002,5 +1176,5 @@
     try { await S.sincronizar(); await S.carregar(); render(); aviso('Sincronizado com a planilha.'); } catch (e) { aviso(e.message, 'erro'); marcarStatus(); }
   });
   window.addEventListener('beforeunload', () => { const s = sessaoAtual(); if (timerSessao && s) { S.salvarSessao(s); } });
-  S.carregar().then(() => { migrarConfig(); verificarPosse(); render(); });
+  S.carregar().then(() => { migrarConfig(); migrarVisitantes(); verificarPosse(); render(); });
 })();

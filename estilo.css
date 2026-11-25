@@ -211,3 +211,53 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 .lista-presenca .marcar.presenca { display: flex; align-items: center; gap: 8px; }
 .lista-presenca .etiqueta { margin-left: auto; }
 @media (max-width: 640px) { .linha-tabela > button.pequeno { grid-column: 3; } }
+
+/* 2.8: registros listrados, telas largas e cadastro de visitantes compacto */
+:root { --listra-a: #ffffff; --listra-b: #e9edf5; --novo: #fff1c7; }
+.conteudo:has(.largura-total) { max-width: 1240px; }
+.pilha.listrada { gap: 0; border: 1px solid var(--borda); border-radius: var(--raio); overflow: hidden; }
+.pilha.listrada > .subcartao { border-left: 0; border-bottom: 1px solid var(--borda); padding: 12px 14px; }
+.pilha.listrada > .subcartao:last-child { border-bottom: 0; }
+.listra-a { background: var(--listra-a); }
+.listra-b { background: var(--listra-b); }
+.cartao-visitante.novo { background: var(--novo); border: 2px solid var(--ouro); border-radius: var(--raio); padding: 12px 14px; margin-bottom: .8rem; }
+.novo-titulo { margin: 0; font-weight: 700; color: var(--alerta); }
+.cartao-visitante.destaque { outline: 3px solid var(--ouro); outline-offset: -3px; transition: outline .3s; }
+.cartao-visitante { gap: .4rem; }
+.visit-grade { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 6px 10px; }
+.visit-grade .campo { margin: 0; }
+.visit-grade .rotulo { font-size: .8rem; }
+.visit-grade input, .visit-grade select, .visit-grade textarea { min-height: 38px; padding: .4rem .55rem; }
+.visit-grade textarea { resize: vertical; }
+.c-nome { grid-column: span 5; } .c-grau { grid-column: span 2; } .c-cim { grid-column: span 2; } .c-celular { grid-column: span 3; }
+.c-loja { grid-column: span 4; } .c-potencia { grid-column: span 2; } .c-cargo { grid-column: span 3; } .c-email { grid-column: span 3; }
+.c-obs { grid-column: span 6; } .c-visitas { grid-column: span 6; }
+.visitas-texto { margin: 0; font-size: .88rem; color: var(--suave); padding: .45rem 0; }
+.alerta-cim { margin: 0; background: var(--alerta-claro); color: var(--alerta); border-radius: 8px; padding: .45rem .65rem; font-size: .9rem; font-weight: 600; }
+.cartao-visitante .linha-botoes { justify-content: flex-start; gap: 12px; }
+.cartao-visitante .linha-botoes button.link { min-height: 30px; }
+.visita-conta { margin: 0; color: var(--ok); font-weight: 600; }
+.relatorio-visitas { background: var(--branco); border: 1px solid var(--borda); border-radius: var(--raio); padding: 12px 14px; }
+.relatorio-visitas .linha-botoes { align-items: flex-end; }
+.relatorio-visitas select { width: auto; }
+.tabela-rel { border: 1px solid var(--borda); border-radius: 8px; overflow: hidden; }
+.rel-linha { display: grid; grid-template-columns: 2fr 80px 3fr; gap: 10px; padding: 8px 10px; font-size: .92rem; }
+.rel-linha.cabecalho { background: var(--azul-claro); font-weight: 700; color: var(--azul); }
+.rel-linha small { display: block; color: var(--suave); }
+.rel-num { font-weight: 700; text-align: center; }
+@media (max-width: 900px) {
+  .c-nome { grid-column: span 8; } .c-grau { grid-column: span 4; } .c-cim, .c-celular { grid-column: span 6; }
+  .c-loja, .c-potencia, .c-cargo, .c-email { grid-column: span 6; } .c-obs, .c-visitas { grid-column: span 12; }
+}
+@media (max-width: 560px) {
+  .c-nome, .c-cim, .c-celular, .c-loja, .c-potencia, .c-cargo, .c-email { grid-column: span 12; }
+  .rel-linha { grid-template-columns: 1fr 56px; } .rel-linha > span:last-child { grid-column: 1 / -1; }
+}
+@media (min-width: 1000px) {
+  .pilha.listrada > .subcartao.graus { display: grid; grid-template-columns: 250px 1fr; align-items: end; gap: 12px; }
+  .pilha.listrada > .subcartao.graus .graus-topo { margin: 0 0 10px; }
+}
+.c-obs { grid-column: span 5; } .c-visitas { grid-column: span 5; }
+.c-acoes { grid-column: span 2; display: flex; align-items: flex-end; justify-content: flex-end; }
+.cartao-visitante.novo .c-obs, .cartao-visitante.novo .c-visitas { grid-column: span 6; }
+@media (max-width: 900px) { .c-obs, .c-visitas, .cartao-visitante.novo .c-obs, .cartao-visitante.novo .c-visitas { grid-column: span 12; } .c-acoes { grid-column: span 12; justify-content: flex-start; } }
