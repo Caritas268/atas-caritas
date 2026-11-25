@@ -67,7 +67,7 @@
   function texto(obj, chave, rotulo, op = {}) {
     const props = {
       value: obj[chave] || '', placeholder: op.placeholder || '', type: op.tipo || 'text',
-      oninput: (e) => { obj[chave] = op.tipo === 'number' ? Number(e.target.value) : e.target.value; (op.salvar || salvarSessaoDepois)(); if (op.aoMudar) op.aoMudar(); }
+      oninput: (e) => { if (op.tipo === 'date' && !dataCompleta(e.target.value)) return; obj[chave] = op.tipo === 'number' ? Number(e.target.value) : e.target.value; (op.salvar || salvarSessaoDepois)(); if (op.aoMudar) op.aoMudar(); }
     };
     const ctl = op.area ? h('textarea', Object.assign(props, { rows: op.linhas || 3 })) : h('input', props);
     if (op.area) ctl.value = obj[chave] || '';
@@ -101,7 +101,7 @@
   }
   /* ---------- Grau na data da sessão (aba "Graus e datas") ---------- */
   const ORDEM_GRAU = ['AM', 'CM', 'MM', 'MI'];
-  const DATAS_GRAU = [['iniciacao', 'Iniciação', 0], ['passagem', 'Passagem', 1], ['elevacao', 'Elevação', 2], ['instalacao', 'Instalação', 3]];
+  const DATAS_GRAU = [['iniciacao', 'Iniciação', 0], ['passagem', 'Passagem a C∴M∴ (GLMERGS: Elevação)', 1], ['elevacao', 'Elevação a M∴M∴ (GLMERGS: Exaltação)', 2], ['instalacao', 'Instalação (M∴I∴)', 3]];
   function irmaoDoCadastro(nome) {
     const n = (nome || '').trim().toLowerCase();
     return n ? S.db.irmaos.find((i) => (i.nome || '').trim().toLowerCase() === n) : null;
@@ -113,7 +113,8 @@
     for (let k = DATAS_GRAU.length - 1; k >= 1; k--) {
       const [campo, , g] = DATAS_GRAU[k];
       if (!irmao[campo]) continue;
-      if (irmao[campo] <= data) i = Math.max(i, g); else if (i >= g) i = g - 1;
+      // no dia da própria Passagem, Elevação ou Instalação o Irmão ainda tem o grau anterior (a ata registra a cerimônia)
+      if (irmao[campo] < data) i = Math.max(i, g); else if (i >= g) i = g - 1;
     }
     if (i < 0 && irmao.iniciacao && irmao.iniciacao <= data) i = 0;
     return i >= 0 ? ORDEM_GRAU[i] : (irmao.grau || '');
@@ -168,7 +169,7 @@
   function garantirDatalist() {
     let dl = document.getElementById('dl-pessoas');
     if (!dl) { dl = h('datalist', { id: 'dl-pessoas' }); document.body.append(dl); }
-    dl.replaceChildren(...todasPessoas().map((p) => h('option', { value: p.nome }, rotuloGrau(p.grau) + (p.loja ? ' · ' + p.loja : ''))));
+    dl.replaceChildren(...todasPessoas().sort(ALFA).map((p) => h('option', { value: p.nome }, rotuloGrau(p.grau) + (p.loja ? ' · ' + p.loja : ''))));
   }
 
   /* Pessoa = { nome, grau } com nome sugerido do cadastro */
@@ -350,6 +351,7 @@
         texto(s, 'administracao', 'Administração', { placeholder: '2025/2026' })),
       texto(s, 'data', 'Data da sessão', { tipo: 'date' }),
       selecao(s, 'tipoSessao', 'Tipo de sessão', F.TIPOS_SESSAO, { ajuda: 'Iniciação, Passagem e Elevação são Sessões Magnas.' }),
+      texto(s, 'nomeSessao', 'Nome da sessão no título (opcional)', { placeholder: 'Ex.: Magna Festiva, Magna Pública Branca, Administrativa', ajuda: 'Deixe em branco para o título automático. O título fica “Sessão” + este nome + o grau.' }),
       campo('Grau em que a Loja foi aberta', botoes([[1, '1º Aprendiz'], [2, '2º Companheiro'], [3, '3º Mestre']], s.grau, (v) => { s.grau = Number(v); salvarSessaoDepois(); render(); })),
       h('div', { class: 'linha2' },
         texto(s, 'horaAbertura', 'Hora da abertura', { tipo: 'time' }),
@@ -440,7 +442,7 @@
         atalhos(it, 'observacao', ['O trabalho foi apresentado à frente da Estação do Oeste, voltado para o Leste', 'O V∴M∴ parabenizou o Irmão pelo trabalho', 'O trabalho será arquivado na Secretaria'], true)];
       case 'palestra': return [
         marcar(it, 'convidado', 'Palestrante convidado (não é Irmão do quadro nem visitante)', { redesenhar: true }),
-        it.convidado ? [texto(it.irmao = it.irmao || { nome: '', grau: '' }, 'nome', 'Nome do palestrante'), texto(it, 'origem', 'Quem é (opcional)', { placeholder: 'Ex.: médico cardiologista; Professor da UFRGS' })] : pessoaCampo(it, 'irmao', 'Quem apresentou'),
+        it.convidado ? [texto(it.irmao = it.irmao || { nome: '', grau: '' }, 'nome', 'Nome do palestrante'), marcar(it, 'feminino', 'É uma palestrante (a ata diz “a palestrante convidada”)'), texto(it, 'origem', 'Quem é (opcional)', { placeholder: 'Ex.: médico cardiologista; Professor da UFRGS' })] : pessoaCampo(it, 'irmao', 'Quem apresentou'),
         texto(it, 'titulo', 'Tema', { placeholder: 'Ex.: a história da Maçonaria no Rio Grande do Sul' }), texto(it, 'observacao', 'Observação (opcional)')];
       case 'debate': return [
         texto(it, 'titulo', 'Tema do debate', { placeholder: 'Ex.: os significados do Pavimento Mosaico' }),
@@ -597,6 +599,7 @@
         o.tipo === 'mudanca_grau' ? [
           selecao(o, 'grauDestino', 'Loja aberta no', [[2, '2º Grau'], [3, '3º Grau']].filter((x) => x[0] > grauBase), { numero: true }),
           texto(o, 'horaFim', 'Reaberta no ' + grauBase + 'º Grau às', { tipo: 'time' }),
+          marcar(o, 'voltou', 'A Loja voltou ao ' + grauBase + 'º Grau na mesma sessão (mesmo sem saber a hora)'),
           texto(o, 'motivo', 'Para quê (opcional)', { placeholder: 'Ex.: para a instrução dos Companheiros Maçons' })] : null,
         ['ingresso', 'saida', 'grandes_honras', 'exame_visitante'].includes(o.tipo) ? listaPessoas(o.pessoas = o.pessoas || [], o.tipo === 'exame_visitante' ? 'Visitante (opcional)' : 'Irmão(s)') : null,
         o.tipo === 'grao_mestre' ? [
@@ -619,7 +622,7 @@
     const marcados = new Set((s.presentes || []).map((p) => p.id));
     const alternar = (i, on) => {
       s.presentes = (s.presentes || []).filter((p) => p.id !== i.id);
-      if (on) s.presentes.push({ id: i.id, nome: i.nome, grau: i.grau });
+      if (on) s.presentes.push({ id: i.id, nome: i.nome, grau: grauNaData(i, s.data) });
       salvarSessaoDepois();
     };
     const total = F.contarPresenca(s);
@@ -631,15 +634,10 @@
         ? h('div', { class: 'linha4' }, ['MI', 'MM', 'CM', 'AM'].map((g) => { s.contagem = s.contagem || {}; return texto(s.contagem, g, rotuloGrau(g), { tipo: 'number', aoMudar: () => { clearTimeout(passoPresenca.t); passoPresenca.t = setTimeout(render, 600); } }); }))
         : [
           h('div', { class: 'acoes-linha' },
-            h('button', { type: 'button', class: 'pequeno', onclick: () => { s.presentes = irmaos.map((i) => ({ id: i.id, nome: i.nome, grau: i.grau })); salvarSessaoDepois(); render(); } }, 'Marcar todos'),
+            h('button', { type: 'button', class: 'pequeno', onclick: () => { s.presentes = irmaos.map((i) => ({ id: i.id, nome: i.nome, grau: grauNaData(i, s.data) })); salvarSessaoDepois(); render(); } }, 'Marcar todos'),
             h('button', { type: 'button', class: 'pequeno', onclick: () => { s.presentes = []; salvarSessaoDepois(); render(); } }, 'Desmarcar todos'),
             anterior ? h('button', { type: 'button', class: 'pequeno', onclick: () => { s.presentes = anterior.presentes.filter((p) => irmaos.some((i) => i.id === p.id)).map((p) => Object.assign({}, p)); salvarSessaoDepois(); render(); } }, 'Os mesmos da Ata nº ' + anterior.numero) : null),
-          ['MI', 'MM', 'CM', 'AM', ''].map((g) => {
-            const doGrau = irmaos.filter((i) => (i.grau || '') === g);
-            if (!doGrau.length) return null;
-            return h('fieldset', { class: 'grupo-presenca' }, h('legend', {}, g ? { MI: 'Mestres Instalados', MM: 'Mestres Maçons', CM: 'Companheiros Maçons', AM: 'Aprendizes Maçons' }[g] + ' (' + rotuloGrau(g) + ')' : 'Sem grau informado'),
-              doGrau.map((i) => h('label', { class: 'marcar presenca' }, h('input', { type: 'checkbox', checked: marcados.has(i.id), onchange: (e) => { alternar(i, e.target.checked); render(); } }), h('span', {}, i.nome))));
-          }),
+          h('div', { class: 'lista-presenca' }, irmaos.slice().sort(ALFA).map((i) => { const g = grauNaData(i, s.data); return h('label', { class: 'marcar presenca' }, h('input', { type: 'checkbox', checked: marcados.has(i.id), onchange: (e) => { alternar(i, e.target.checked); render(); } }), h('span', {}, i.nome), h('span', { class: 'etiqueta' }, rotuloGrau(g) || 'sem grau')); })),
           h('p', { class: 'ajuda' }, 'Faltou alguém na lista? Cadastre na aba Irmãos.')
         ],
       h('h3', {}, 'Irmãos visitantes'),
@@ -799,10 +797,11 @@
       h('div', { class: 'segmentado largo' }, [['irmaos', 'Quadro da Loja'], ['graus', 'Graus e datas'], ['visitantes', 'Visitantes']].map(([v, r]) => h('button', { type: 'button', class: aba === v ? 'ativo' : '', onclick: () => { estado.abaCadastro = v; render(); } }, r))),
       aba === 'irmaos' ? tabelaIrmaos() : aba === 'graus' ? tabelaGraus() : tabelaVisitantes());
   }
+  const ALFA = (a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt', { sensitivity: 'base' });
   function tabelaIrmaos() {
     const lista = S.db.irmaos;
     const conferir = lista.filter((i) => i.conferir).length;
-    const ordem = lista.slice().sort((a, b) => ['MI', 'MM', 'CM', 'AM', ''].indexOf(a.grau || '') - ['MI', 'MM', 'CM', 'AM', ''].indexOf(b.grau || '') || a.nome.localeCompare(b.nome));
+    const ordem = lista.slice().sort((a, b) => (!a.nome) - (!b.nome) || ALFA(a, b));
     return h('div', { class: 'formulario' },
       conferir ? h('div', { class: 'faixa alerta' }, conferir + ' nomes vieram das atas antigas e precisam ser conferidos (grau e grafia). ',
         h('button', { type: 'button', class: 'pequeno', onclick: () => { lista.forEach((i) => delete i.conferir); salvarListaDepois('irmaos'); render(); } }, 'Já conferi todos')) : null,
@@ -813,16 +812,36 @@
         h('input', { value: i.nome, 'aria-label': 'Nome', oninput: (e) => { i.nome = e.target.value; delete i.conferir; salvarListaDepois('irmaos'); } }),
         h('select', { 'aria-label': 'Grau', onchange: (e) => { i.grau = e.target.value; delete i.conferir; salvarListaDepois('irmaos'); } }, GRAU_OPC.map(([v, r]) => h('option', { value: v, selected: i.grau === v }, r))),
         h('label', { class: 'marcar mini' }, h('input', { type: 'checkbox', checked: i.ativo !== false, onchange: (e) => { i.ativo = e.target.checked; salvarListaDepois('irmaos'); render(); } }), h('span', {}, 'Ativo')),
-        i.conferir ? h('span', { class: 'etiqueta' }, 'conferir') : null))),
+        h('button', { type: 'button', class: 'pequeno', 'aria-expanded': String(estado.fichaIrmao === i.id), onclick: () => { estado.fichaIrmao = estado.fichaIrmao === i.id ? null : i.id; render(); } }, estado.fichaIrmao === i.id ? 'Fechar' : 'Ficha'),
+        i.conferir ? h('span', { class: 'etiqueta' }, 'conferir') : null,
+        estado.fichaIrmao === i.id ? fichaIrmao(i) : null))),
       h('button', { type: 'button', class: 'secundario', onclick: () => { lista.push({ id: S.novoId('i'), nome: '', grau: 'AM', ativo: true, matricula: '' }); render(); } }, '+ Irmão'),
       h('p', { class: 'ajuda' }, 'CIM é a identidade maçônica (matrícula) dada pela GLMERGS. Irmão que saiu do quadro: desmarque “Ativo”. Ele continua nas atas antigas, mas some da lista de presença.')
     );
   }
+  /* Ficha com os dados pessoais do Irmão (vindos da GLMERGS ou digitados). Nada disto sai na ata. */
+  const CAMPOS_FICHA = [
+    ['nascimento', 'Data de nascimento', { type: 'date' }], ['cpf', 'CPF', { inputmode: 'numeric' }],
+    ['celular', 'Celular / WhatsApp', { type: 'tel' }], ['telefone', 'Outros telefones', { type: 'tel' }],
+    ['email', 'E-mail', { type: 'email' }], ['profissao', 'Profissão', {}], ['empresa', 'Empresa', {}]
+  ];
+  function fichaIrmao(i) {
+    const alterar = (c, v) => { i[c] = v; salvarListaDepois('irmaos'); };
+    return h('div', { class: 'ficha-irmao' },
+      h('div', { class: 'visit-campos' }, CAMPOS_FICHA.map(([c, rot, op]) => h('label', { class: 'campo' }, h('span', { class: 'rotulo' }, rot),
+        h('input', Object.assign({ value: i[c] || '', oninput: (e) => { if (op.type === 'date' && !dataCompleta(e.target.value)) return; alterar(c, e.target.value); } }, op))))),
+      h('label', { class: 'campo' }, h('span', { class: 'rotulo' }, 'Endereço'), h('input', { value: i.endereco || '', oninput: (e) => alterar('endereco', e.target.value) })),
+      h('label', { class: 'campo' }, h('span', { class: 'rotulo' }, 'Família (cônjuge e filhos, com datas de nascimento)'), h('textarea', { rows: 2, value: i.familia || '', oninput: (e) => alterar('familia', e.target.value) })),
+      h('label', { class: 'campo' }, h('span', { class: 'rotulo' }, 'Anotações'), h('textarea', { rows: 2, value: i.anotacoes || '', oninput: (e) => alterar('anotacoes', e.target.value) })),
+      h('p', { class: 'ajuda' }, 'As datas de Iniciação, Passagem, Elevação e Instalação ficam na aba “Graus e datas”. Nada desta ficha aparece na ata.'));
+  }
+  /* Campo de data: só vale quando o ano tem 4 algarismos (evita gravar 0002 enquanto se digita 2022) */
+  function dataCompleta(v) { return !v || /^(19|20)\d\d-\d\d-\d\d$/.test(v); }
   /* Registro das datas de Iniciação, Passagem, Elevação e Instalação de cada Irmão */
   function tabelaGraus() {
     const busca = (estado.buscaGraus || '').trim().toLowerCase();
     const lista = S.db.irmaos.filter((i) => i.ativo !== false && (!busca || i.nome.toLowerCase().includes(busca)))
-      .sort((a, b) => a.nome.localeCompare(b.nome));
+      .sort(ALFA);
     return h('div', { class: 'formulario' },
       h('p', { class: 'ajuda' }, 'Registre as datas conforme forem acontecendo. A ata usa o grau que cada Irmão tinha na data da sessão. Sem datas, vale o grau do Quadro da Loja.'),
       S.modoGoogle() ? h('p', { class: 'ajuda' }, 'As datas também ficam nas colunas da aba “Irmaos” da planilha.') : null,
@@ -830,11 +849,12 @@
       h('div', { class: 'pilha' }, lista.map((i) => h('div', { class: 'subcartao graus' },
         h('div', { class: 'graus-topo' }, h('strong', {}, i.nome), h('span', { class: 'etiqueta' }, rotuloGrau(i.grau) || 'sem grau')),
         h('div', { class: 'graus-datas' }, DATAS_GRAU.map(([campo, rotulo]) => h('label', { class: 'campo' }, h('span', { class: 'rotulo' }, rotulo),
-          h('input', { type: 'date', value: i[campo] || '', onchange: (e) => {
+          h('input', { type: 'date', value: i[campo] || '', min: '1900-01-01', max: '2099-12-31', oninput: (e) => {
+            if (!dataCompleta(e.target.value)) return;
             i[campo] = e.target.value;
             const g = grauAtualPelasDatas(i);
-            if (g && g !== i.grau) { i.grau = g; aviso(i.nome + ' agora consta como ' + rotuloGrau(g) + '.'); }
-            salvarListaDepois('irmaos'); render();
+            if (g && g !== i.grau) { i.grau = g; aviso(i.nome + ' agora consta como ' + rotuloGrau(g) + '.'); const et = e.target.closest('.graus').querySelector('.etiqueta'); if (et) et.textContent = rotuloGrau(g); }
+            salvarListaDepois('irmaos');
           } }))))))),
       lista.length ? null : h('p', { class: 'vazio' }, 'Nenhum Irmão encontrado.'));
   }
@@ -851,7 +871,7 @@
     const lista = S.db.visitantes;
     const busca = (estado.buscaVisit || '').trim().toLowerCase();
     const vistos = lista.filter((v) => !busca || [v.nome, v.loja, v.potencia, v.cim].join(' ').toLowerCase().includes(busca))
-      .sort((a, b) => (!a.nome) - (!b.nome) || (a.nome || '').localeCompare(b.nome || ''));
+      .sort((a, b) => (!a.nome) - (!b.nome) || ALFA(a, b));
     const alterar = (v, c, val) => { v[c] = val; salvarListaDepois('visitantes'); };
     return h('div', { class: 'formulario' },
       h('p', { class: 'ajuda' }, 'Cadastre aqui os visitantes do Livro de Presenças. Na ata saem só o nome, o grau, o cargo e a Loja; CIM, Potência, telefone, e-mail e observações ficam guardados no sistema. Ao digitar o nome na presença da ata, os dados vêm sozinhos.'),
@@ -944,7 +964,7 @@
       marcar(c, 'aberturaRitual', 'Registrar as formalidades de abertura (Loja coberta e Palavra recebida pelos Diáconos)', { salvar: salvarConfigDepois, padraoVerdadeiro: true }),
       marcar(c, 'fechamentoRitual', 'Registrar o fechamento completo (“assim permanecendo até a próxima sessão ordinária…”)', { salvar: salvarConfigDepois, padraoVerdadeiro: true }),
       marcar(c, 'abrevPontos', 'Usar os três pontos nas abreviações (V∴M∴, Ir∴). Desmarque para o estilo do Ritual do York: VM, Ir., MM', { salvar: salvarConfigDepois, padraoVerdadeiro: true }),
-      h('p', { class: 'ajuda versao' }, 'Sistema de Atas Cáritas 268 · versão 2.4 (Rito de York)')
+      h('p', { class: 'ajuda versao' }, 'Sistema de Atas Cáritas 268 · versão 2.6 (Rito de York)')
     );
   }
 

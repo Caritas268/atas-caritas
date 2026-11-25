@@ -175,11 +175,12 @@
     const g = GRAUS[it.grauInstrucao || 'AM'];
     return (it.parte ? it.parte + ' da ' : '') + E.ordinal(it.numero || 1, true) + ' Instrução de ' + g.abrev;
   }
+  /* "palestrante convidada Fulana, Cunhada, esposa do Ir∴ …" (sem artigo) */
   function convidadoNome(it) {
     const p = it.irmao || {};
-    return 'o palestrante convidado ' + (p.nome || '[nome]') + (it.origem ? ', ' + semPonto(it.origem) : '');
+    return (it.feminino ? 'palestrante convidada ' : 'palestrante convidado ') + (p.nome || '[nome]') + (it.origem ? ', ' + semPonto(it.origem) : '');
   }
-  function quemPalestra(it) { return it.convidado ? convidadoNome(it) : 'o ' + pessoa(it.irmao); }
+  function quemPalestra(it) { return it.convidado ? (it.feminino ? 'a ' : 'o ') + convidadoNome(it) + (it.origem ? ',' : '') : 'o ' + pessoa(it.irmao); }
   /* "…, no qual os Irmãos A e B apresentaram seus pontos de vista sobre o tema" */
   function quemOpinou(it) {
     const ps = nomes(it.participantes);
@@ -210,7 +211,7 @@
         return t;
       }
       case 'palestra':
-        return 'Palestra apresentada ' + (it.convidado ? 'por ' + convidadoNome(it) : 'pelo ' + pessoa(it.irmao)) + (it.titulo ? ', sobre o tema ' + aspas(it.titulo) : '');
+        return 'Palestra apresentada ' + (it.convidado ? (it.feminino ? 'pela ' : 'pelo ') + convidadoNome(it) : 'pelo ' + pessoa(it.irmao)) + (it.titulo ? ', sobre o tema ' + aspas(it.titulo) : '');
       case 'debate':
         return 'Debate' + (it.titulo ? ' sobre ' + semPonto(it.titulo) : '');
       case 'orientacoes':
@@ -462,7 +463,7 @@
       case 'mudanca_grau': {
         const g = Number(o.grauDestino) || Math.min(grauBase + 1, 3);
         let t = h + 'o ' + VM + ' determinou ao Ir∴ 1º Diácono que retirasse os Irmãos não qualificados para o ' + g + 'º Grau e, renunciando a todos os Sinais e Cerimônias, declarou os trabalhos suspensos no ' + grauBase + 'º Grau e a Loja aberta no ' + g + 'º Grau para trabalho e instrução' + (o.motivo ? ', ' + semPonto(o.motivo) : '') + '.';
-        if (o.horaFim) t += ' Às ' + E.hora(o.horaFim) + ', concluída essa parte, os trabalhos foram encerrados no ' + g + 'º Grau e a Loja reaberta no ' + grauBase + 'º Grau, sendo readmitidos os Irmãos que aguardavam.';
+        if (o.horaFim || o.voltou) t += ' ' + (o.horaFim ? 'Às ' + E.hora(o.horaFim) + ', c' : 'C') + 'oncluída essa parte, os trabalhos foram encerrados no ' + g + 'º Grau e a Loja reaberta no ' + grauBase + 'º Grau, sendo readmitidos os Irmãos que aguardavam, para a continuidade dos trabalhos.';
         return maiuscula(t);
       }
       case 'retirada_aprendizes':
@@ -514,6 +515,7 @@
     const cer = (s.agenda || []).find((it) => it.tipo === 'cerimonia' && ['Iniciação', 'Passagem', 'Elevação'].includes(it.cerimonia || 'Iniciação'));
     if (tipoSessao === 'Magna' && cer) nomeTitulo = 'Sessão Magna de ' + (cer.cerimonia || 'Iniciação');
     if (tipoSessao === 'Pública' && (s.agenda || []).some((it) => it.tipo === 'instalacao')) { nomeTitulo = 'Sessão Pública de Instalação e Posse'; sufixo = ''; }
+    if ((s.nomeSessao || '').trim()) nomeTitulo = 'Sessão ' + s.nomeSessao.trim().replace(/^sess[ãa]o\s+/i, '');
     P.push({ titulo: true, runs: [n('Ata nº ' + String(s.numero || '').padStart(2, '0') + (ano ? ' / ' + ano : '') + ' – ' + nomeTitulo + sufixo)] });
 
     // Separa o que foi tratado em loja, no descanso e depois do descanso

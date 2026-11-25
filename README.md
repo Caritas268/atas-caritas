@@ -5,6 +5,7 @@ Ritual do Rito de York (Blue Lodge) da GLMERGS, edição 2020.
 Os dados ficam na planilha privada da Loja no Google Drive (ver `google/Codigo.gs` no pacote original).
 Nenhum nome de Irmão fica neste repositório.
 
+Versão 2.5: dados da GLMERGS (ficha de cada Irmão), atas 07 a 35/2026 abertas como rascunho, ordem alfabética em todas as listas, correção dos campos de data, nome livre da sessão no título.
 Versão 2.4: campo CIM no cadastro dos Irmãos; cadastro completo de visitantes (CIM, Loja e nº, Potência, celular/WhatsApp, e-mail, outras informações), com busca.
 Versão 2.3: Atas 01 a 06/2026 importáveis (função importarAtas2026 no Codigo.gs), lista "A completar" em cada ata, opção "Constou na Agenda do Dia" em todo item, ∴ nas assinaturas.
 Versão 2.2: aba Graus e datas (grau de cada Irmão na data da sessão), Ad Hoc automático pela nominata vigente, grau do secretário no fechamento e nas assinaturas, numeração por ano civil, Mestre de Harmonia.

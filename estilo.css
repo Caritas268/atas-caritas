@@ -135,7 +135,7 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 .presenca { border-bottom: 1px solid var(--fundo); }
 .acoes-gerar { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .5rem; }
 .tabela { display: flex; flex-direction: column; gap: .4rem; }
-.linha-tabela { display: grid; grid-template-columns: 90px 1fr 100px auto auto; gap: .4rem; align-items: center; background: var(--branco); border: 1px solid var(--borda); border-radius: var(--raio); padding: .4rem; }
+.linha-tabela { display: grid; grid-template-columns: 90px 1fr 100px auto auto auto; gap: .4rem; align-items: center; background: var(--branco); border: 1px solid var(--borda); border-radius: var(--raio); padding: .4rem; }
 .linha-tabela.visit { grid-template-columns: 1.4fr 80px 1fr 1fr auto; }
 .linha-tabela.inativo input { color: var(--suave); text-decoration: line-through; }
 .botao-arquivo { border: 1px solid var(--borda); background: var(--branco); border-radius: var(--raio); padding: .6rem .9rem; cursor: pointer; min-height: 44px; display: inline-flex; align-items: center; }
@@ -202,3 +202,12 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 .linha-botoes { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .linha-botoes input[type=search] { flex: 1 1 220px; }
 @media (max-width: 640px) { .visit-campos { grid-template-columns: 1fr; } .visit-topo { grid-template-columns: 1fr 110px; } }
+
+/* 2.5: ficha do Irmão e presença em ordem alfabética */
+.ficha-irmao { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 8px; padding: 10px 4px 4px; border-top: 1px dashed var(--borda); }
+.ficha-irmao .campo { margin: 0; }
+.ficha-irmao input, .ficha-irmao textarea { min-width: 0; width: 100%; }
+.lista-presenca { display: flex; flex-direction: column; gap: 2px; }
+.lista-presenca .marcar.presenca { display: flex; align-items: center; gap: 8px; }
+.lista-presenca .etiqueta { margin-left: auto; }
+@media (max-width: 640px) { .linha-tabela > button.pequeno { grid-column: 3; } }
