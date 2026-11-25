@@ -1163,7 +1163,7 @@
       marcar(c, 'aberturaRitual', 'Registrar as formalidades de abertura (Loja coberta e Palavra recebida pelos Diáconos)', { salvar: salvarConfigDepois, padraoVerdadeiro: true }),
       marcar(c, 'fechamentoRitual', 'Registrar o fechamento completo (“assim permanecendo até a próxima sessão ordinária…”)', { salvar: salvarConfigDepois, padraoVerdadeiro: true }),
       marcar(c, 'abrevPontos', 'Usar os três pontos nas abreviações (V∴M∴, Ir∴). Desmarque para o estilo do Ritual do York: VM, Ir., MM', { salvar: salvarConfigDepois, padraoVerdadeiro: true }),
-      h('p', { class: 'ajuda versao' }, 'Sistema de Atas Cáritas 268 · versão 2.8 (Rito de York)')
+      h('p', { class: 'ajuda versao' }, 'Sistema de Atas Cáritas 268 · versão 2.8.1 (Rito de York)')
     );
   }
 

@@ -213,10 +213,10 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 @media (max-width: 640px) { .linha-tabela > button.pequeno { grid-column: 3; } }
 
 /* 2.8: registros listrados, telas largas e cadastro de visitantes compacto */
-:root { --listra-a: #ffffff; --listra-b: #e9edf5; --novo: #fff1c7; }
+:root { --listra-a: #ffffff; --listra-b: #d3dcec; --novo: #fff1c7; }
 .conteudo:has(.largura-total) { max-width: 1240px; }
 .pilha.listrada { gap: 0; border: 1px solid var(--borda); border-radius: var(--raio); overflow: hidden; }
-.pilha.listrada > .subcartao { border-left: 0; border-bottom: 1px solid var(--borda); padding: 12px 14px; }
+.pilha.listrada > .subcartao { border-left: 0; border-bottom: 1px solid #aebbd3; padding: 12px 14px; }
 .pilha.listrada > .subcartao:last-child { border-bottom: 0; }
 .listra-a { background: var(--listra-a); }
 .listra-b { background: var(--listra-b); }
